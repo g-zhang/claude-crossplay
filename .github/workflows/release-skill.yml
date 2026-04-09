@@ -1,0 +1,29 @@
+name: Build and Release Skill
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Zip src/ into crossplay-solver.skill
+        run: |
+          cd src
+          zip -r ../crossplay-solver.skill ./*
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: crossplay-solver.skill
+          generate_release_notes: true
