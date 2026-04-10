@@ -33,7 +33,7 @@ Second run in same session is instant (repo cached). Use `--full` flag for the c
 ### Step 2: Read the board
 
 ```bash
-python scripts/grid_overlay.py /mnt/user-data/uploads/<screenshot>.png -o /home/claude/grid_overlay.png
+python scripts/grid_overlay.py /mnt/user-data/uploads/<screenshot>.png -o /home/claude/overlay-{N}.png
 ```
 
 View the overlay image and manually read each green-highlighted cell's letter using the numbered grid lines. Build board.json from what you see.
@@ -62,13 +62,13 @@ PREMIUM = {}  # ... (copy premium dict from solver constants)
 
 generate_board_confirm_html(
     board=board, premium=PREMIUM,
-    output_path="/mnt/user-data/outputs/board_confirm.html",
+    output_path="/mnt/user-data/outputs/board-{N}.html",
     title="Board Confirmation — vs Opponent",
     subtitle="You: X · Opponent: Y · Last play: WORD for N pts"
 )
 ```
 
-Present the HTML file to the user and **wait for confirmation** before solving. This catches tile detection errors (false positives from premium squares, missed tiles, misread letters) before they waste a solve cycle.
+Present both the HTML file (`board-{N}.html`) and the grid overlay PNG (`overlay-{N}.png`) to the user and **wait for confirmation** before solving. This catches tile detection errors (false positives from premium squares, missed tiles, misread letters) before they waste a solve cycle.
 
 ### Step 5: Run the solver
 
@@ -107,11 +107,11 @@ generate_moves_html(
     title="Round N — description",
     subtitle="You: X · Opponent: Y · Rack: ... · N tiles left",
     board=BOARD_DICT, premium=PREMIUM_DICT, moves=moves,
-    output_path="/mnt/user-data/outputs/moves-round{N}.html"
+    output_path="/mnt/user-data/outputs/moves-{N}.html"
 )
 ```
 
-**Round counter:** Replace `{N}` with an incrementing integer (1, 2, 3, …) for each solve in the conversation. This preserves every move output as a separate artifact (e.g. `moves-round1.html`, `moves-round2.html`) so earlier results are not overwritten.
+**Round counter:** Replace `{N}` with an incrementing integer (1, 2, 3, …) for each solve in the conversation. This applies to all outputs: `board-{N}.html`, `overlay-{N}.png`, and `moves-{N}.html`. This preserves every output as a separate artifact so earlier results are not overwritten.
 ```
 
 Each move diagram shows:
@@ -206,6 +206,5 @@ from nwl23_ref import (
 **Integration with solver output:**
 - After running the solver, validate all 2-letter cross-words against `TWO_LETTER`
 - Flag any cross-word not in the set as INVALID — the play will be rejected
-- When presenting moves, note if any cross-words are risky
 - Check rack for bingo potential before solving — if TISANE/SATIRE/RETINA overlap ≥5, prioritize 7-tile plays
 - When holding J/Q/X/Z, cross-reference `SHORT_X` etc. for premium-square targeting ideas
