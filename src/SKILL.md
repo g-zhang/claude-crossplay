@@ -107,8 +107,11 @@ generate_moves_html(
     title="Round N — description",
     subtitle="You: X · Opponent: Y · Rack: ... · N tiles left",
     board=BOARD_DICT, premium=PREMIUM_DICT, moves=moves,
-    output_path="/mnt/user-data/outputs/moves.html"
+    output_path="/mnt/user-data/outputs/moves-round{N}.html"
 )
+```
+
+**Round counter:** Replace `{N}` with an incrementing integer (1, 2, 3, …) for each solve in the conversation. This preserves every move output as a separate artifact (e.g. `moves-round1.html`, `moves-round2.html`) so earlier results are not overwritten.
 ```
 
 Each move diagram shows:
