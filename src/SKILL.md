@@ -112,7 +112,6 @@ generate_moves_html(
 ```
 
 **Round counter:** Replace `{N}` with an incrementing integer (1, 2, 3, …) for each solve in the conversation. This applies to all outputs: `board-{N}.html`, `overlay-{N}.png`, and `moves-{N}.html`. This preserves every output as a separate artifact so earlier results are not overwritten.
-```
 
 Each move diagram shows:
 - Existing tiles in blue, **new tiles in orange** with inset border
