@@ -18,9 +18,9 @@ jobs:
 
       - name: Zip src/ into crossplay-solver.skill
         run: |
-          cd src
-          zip -r ../crossplay-solver.skill ./*
-          cd ..
+          cp -r src crossplay-solver
+          zip -r crossplay-solver.skill crossplay-solver/
+          rm -rf crossplay-solver
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

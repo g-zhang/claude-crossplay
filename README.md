@@ -42,15 +42,15 @@ Claude in the background will:
 4. Show you an HTML board confirmation before solving
 5. Run the solver and present the top moves visually
 
-### Running locally
-#### Requirements
+## Running locally
+### Requirements
 - Python 3.8+
 - `opencv-python`, `numpy`, `requests`
 
 ```bash
 pip install opencv-python numpy requests
 ```
-
+### Example
 ```bash
 # 1. Build the dictionary (once per session)
 python scripts/setup_dict.py --output dict.txt
@@ -67,7 +67,7 @@ python scripts/solver.py \
     -q
 ```
 
-#### `board.json` format
+### `board.json` format
 
 ```json
 {
@@ -81,3 +81,24 @@ python scripts/solver.py \
 
 Keys are `"row,col"` (0-indexed, 0 = top-left).
 
+### Package skill
+
+A `.skill` file is a ZIP archive whose root contains the skill folder. The folder name should match the `name` field in `SKILL.md`.
+
+```bash
+# From the repo root
+cp -r src crossplay-solver
+zip -r crossplay-solver.skill crossplay-solver/
+rm -rf crossplay-solver
+```
+
+This produces `crossplay-solver.skill` in the project root with the correct structure:
+
+```
+crossplay-solver.skill
+└── crossplay-solver/
+    ├── SKILL.md
+    └── scripts/
+```
+
+Install via **Settings → Skills → Add Skill** in Claude Desktop.
