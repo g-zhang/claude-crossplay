@@ -1,6 +1,6 @@
 ---
 name: crossplay-solver
-description: Solve NYT Crossplay board positions — find the highest-scoring legal moves given a board screenshot and a rack of tiles. Use this skill whenever the user mentions NYT Crossplay, Crossplay, or shares a screenshot of a Crossplay board and asks what to play, or references rack letters and wants move suggestions. This skill handles board reconstruction from images, NWL23 dictionary setup, cross-word validation, premium square scoring, and visual HTML output of recommended plays.
+description: Solve NYT Crossplay board positions — find the highest-scoring legal moves given a board screenshot and a rack of tiles. Use this skill whenever the user mentions NYT Crossplay, Crossplay, or shares a screenshot of a Crossplay board and asks what to play, or references rack letters and wants move suggestions. Also use when the user asks dictionary questions like "words ending in Z" or "4 letter words with Q", or asks for hints/ideas on a Crossplay board. This skill handles board reconstruction from images, NWL23 dictionary setup, cross-word validation, premium square scoring, and visual HTML output of recommended plays.
 ---
 
 # NYT Crossplay Board Solver
@@ -16,7 +16,45 @@ Four scripts:
 3. **`scripts/solver.py`** — solver engine: finds all legal moves, scores them
 4. **`scripts/moves_template.py`** — shared HTML template for visual move boards and board confirmation. Supports light/dark mode. Exports `generate_board_confirm_html()` and `generate_moves_html()`.
 
-## Workflow
+## Modes
+
+This skill operates in three modes. Detect the mode from the user's prompt before starting:
+
+### 1. Dictionary Mode
+
+**Trigger:** User invokes via `/` slash command and asks a dictionary lookup question — e.g. "is there a word that ends with Z", "4 letter words that begin with Q", "words with double L", "valid 2-letter words with X". No board solving is needed.
+
+**If a screenshot is attached:** Only examine the tile rack to extract available letters, then constrain the dictionary search to those letters.
+
+**Workflow:**
+1. Set up dictionary (Step 1 from main workflow, if not already done)
+2. Search `dict.txt` using grep/Python to answer the query (filter by length, pattern, available letters, etc.)
+3. Also cross-reference `nwl23_ref.py` lists (TWO_LETTER, SHORT_J/Q/X/Z, etc.) when relevant
+4. Respond with a text list of matching words — no board HTML, no overlay, no solver
+
+### 2. Hint Mode
+
+**Trigger:** User says "give me a hint", "give me ideas", "any suggestions", "where should I look", or similar hint/idea language, and attaches a screenshot.
+
+**Workflow:**
+1. Run the full solver pipeline (Steps 1–5) internally
+2. **Do NOT output any HTML moves files.** Instead, respond with text-only subtle hints:
+   - Point toward promising areas of the board (e.g. "there's an opening near the bottom-right triple word")
+   - Mention strategic ideas (e.g. "your rack has good bingo potential", "look for hooks on existing short words")
+   - Hint at letter combinations without giving away the exact word (e.g. "your high-value tile could pair well with what's in row 8")
+   - Mention approximate point ranges ("there's a 30+ point play available")
+3. Board confirmation (Step 4) is still required before running the solver
+4. Output `board-{N}.html` and `overlay-{N}.png` as usual for board confirmation, but skip `moves-{N}.html`
+
+### 3. Full Solver Mode (default)
+
+**Trigger:** Screenshot provided with no hint language, or explicit "solve", "what should I play", "best move", etc. This is the default when neither Dictionary nor Hint mode applies.
+
+**Workflow:** Follow the full pipeline below (Steps 1–6).
+
+---
+
+## Full Solver Workflow
 
 ### Step 1: Set up dictionary (once per session)
 

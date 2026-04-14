@@ -49,16 +49,9 @@ def find_board_region(image):
     board_w = x2 - x1
     board_h = y2 - y1
 
-    if board_h > board_w * 1.5:
-        target_size = board_w
-        best_y, best_density = y1, 0
-        for test_y in range(y1, y2 - target_size, 10):
-            density = np.sum(edges[test_y:test_y + target_size, x1:x2])
-            if density > best_density:
-                best_density, best_y = density, test_y
-        y1, y2 = best_y, best_y + target_size
-
     # --- Phase 2: anchor on premium squares at edges ---
+    # Always use the FULL edge-detected y range (before any density trimming)
+    # so that premium squares at the top of the board are not cropped away.
     margin = int(board_w * 0.15)
     sy1 = max(0, y1 - margin)
     sy2 = min(h, y2 + margin)
@@ -75,9 +68,31 @@ def find_board_region(image):
     right_cl = find_premium_clusters(right_sat)
 
     if len(left_cl) >= 2 and len(right_cl) >= 2:
-        # First/last clusters on left = centers of cells in rows 0 and 14
-        top_y = (left_cl[0][0] + right_cl[0][0]) // 2
-        bot_y = (left_cl[-1][0] + right_cl[-1][0]) // 2
+        # --- Filter and pair clusters robustly ---
+        # 1. Remove overly wide clusters (rack, UI elements)
+        max_width = 100
+        left_filt = [c for c in left_cl if (c[2] - c[1]) < max_width]
+        right_filt = [c for c in right_cl if (c[2] - c[1]) < max_width]
+
+        # 2. Pair left/right clusters that appear at same y (within tolerance)
+        #    Real premium rows appear on BOTH edges; spurious ones are one-sided
+        tol = 20  # pixels
+        paired = []
+        for lc in left_filt:
+            for rc in right_filt:
+                if abs(lc[0] - rc[0]) < tol:
+                    paired.append(((lc[0] + rc[0]) // 2, lc, rc))
+                    break
+
+        # Use paired clusters if we got enough (expect 5: rows 0,3,7,11,14)
+        if len(paired) >= 2:
+            top_y = paired[0][0]
+            bot_y = paired[-1][0]
+            print(f"  Paired clusters: {len(paired)} (filtered from L={len(left_cl)}/R={len(right_cl)})")
+        else:
+            # Fallback to filtered first/last
+            top_y = (left_filt[0][0] + right_filt[0][0]) // 2
+            bot_y = (left_filt[-1][0] + right_filt[-1][0]) // 2
 
         # Distance = 14 cell widths (center of row 0 to center of row 14)
         cell = (bot_y - top_y) / 14.0
