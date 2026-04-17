@@ -200,10 +200,15 @@ Each move diagram shows:
 
 ## Grid Overlay Technical Details
 
-The `grid_overlay.py` script uses a two-phase board detection:
+The `grid_overlay.py` script uses robust anchor detection that cross-validates across all four edges of the board:
 
-1. **Edge-based crop**: Canny edges -> row/col projection -> find board extent. Handles the coarse crop.
-2. **Dual-anchor premium calibration**: Scans left, right, and top edges for premium square clusters (saturation > 20 in HSV). The first and last clusters on the left/right edges correspond to the centers of rows 0 and 14 — their distance gives the exact cell size (span / 14). Similarly, horizontal clusters in the top row pin column positions. This anchors both the start AND end of the grid, preventing cumulative drift that occurs when only the top edge is used.
+1. **Edge-based rough crop**: Canny edges → column projection → find board horizontal extent.
+2. **4-edge cluster detection**: Scans left/right/top/bottom strips (~1 cell wide) for premium-square saturation clusters (HSV S > 20).
+3. **Opposite-edge matching**: Pairs left-edge clusters with right-edge clusters by y-coordinate (and top with bottom by x-coordinate). Unmatched clusters are discarded — this filters out UI noise like the turquoise knife avatar on the left of the header, or the tile rack below the board. A real board row has premiums at col 0 AND col 14 (so a true anchor shows up on both edges at the same y).
+4. **Subset fitting to known premium pattern**: Crossplay has premiums on edges at rows/cols {0, 3, 7, 11, 14} exactly. The fit tries every N-subset of matched anchors, fits a linear model `center_i = origin + pos_i * cell_size` against the known pattern, and picks the fit with minimum max-pixel residual. If extra noise clusters slip past edge matching (e.g. the tile rack produces blue saturation on both left AND right edges), the subset search still finds the real 5 by residual minimization.
+5. **Cross-axis validation**: Computes `cell_y` from rows and `cell_x` from cols independently. If they disagree by >5%, trusts whichever axis has the lower fit residual.
+
+Typical good fit: residual < 3px, cell_x ≈ cell_y to within 1%. Run with `--debug` to see all diagnostic info.
 
 The script also adds left padding to the output image when the board is near the left edge, ensuring row labels are always visible.
 
@@ -216,7 +221,7 @@ Blue tile detection uses HSV filtering tuned for Crossplay's tile color:
 
 - **Score mismatch**: Verify board column alignment first. Check for blank tiles. Verify tile values match the game.
 - **No moves found**: Check board reconstruction. Verify existing words are in dict.txt.
-- **Grid overlay misaligned**: The dual-anchor calibration requires at least 2 premium clusters on both left and right edges. If premium squares are covered by tiles, the fallback uses single-edge detection. You can also tune the HSV thresholds in `grid_overlay.py`.
+- **Grid overlay misaligned**: Run with `--debug` to inspect cluster detection. Check: (a) `matched_ys` and `matched_xs` should each have ~5 entries near the premium pattern, (b) `resid_y` and `resid_x` should be <3px, (c) `axis_disagreement` should be <1%. If residuals are high, the subset fitting can't find a clean pattern — the board may be partially occluded or UI chrome is contaminating the edge strips. If `cell_x` differs from `cell_y` by >5%, the code auto-picks the lower-residual axis. You can also tune HSV thresholds in `find_clusters()`.
 - **False positive tiles**: If premium squares are detected as tiles, increase the ratio threshold above 0.42. If tiles are missed, decrease it.
 
 ## NWL23 Reference (scripts/nwl23_ref.py)
