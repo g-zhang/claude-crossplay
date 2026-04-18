@@ -167,12 +167,12 @@ Each move diagram shows:
 |-----|---------|
 | 1 | A, E, I, N, O, R, S, T |
 | 2 | D, L, U |
-| 3 | B, C, H, M, P |
-| 4 | F, G, Y |
+| 3 | C, H, M, P |
+| 4 | B, F, G, Y |
 | 5 | W |
 | 6 | K, V |
-| 8 | J, X |
-| 10 | Q, Z |
+| 8 | X |
+| 10 | J, Q, Z |
 
 ## NYT Crossplay Premium Layout (56 squares, fully symmetric)
 

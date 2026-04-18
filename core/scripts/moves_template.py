@@ -3,6 +3,8 @@ Shared HTML template for visual move boards.
 Supports light and dark mode via prefers-color-scheme.
 """
 
+from solver import TILE_PTS
+
 CSS = """<style>
 *{box-sizing:border-box;margin:0;padding:0}
 
@@ -53,7 +55,7 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .move-note{font-size:13px;color:var(--text-note);margin-top:4px;padding:8px;background:var(--note-bg);border-radius:6px;line-height:1.5}
 .board{display:grid;grid-template-columns:24px repeat(15,1fr);grid-template-rows:24px repeat(15,1fr);gap:1px;background:var(--grid-bg);border:1px solid var(--grid-border);border-radius:4px;overflow:hidden;max-width:540px;margin:4px 0}
 .cell{display:flex;align-items:center;justify-content:center;background:var(--cell-bg);font-size:12px;font-weight:600;aspect-ratio:1;position:relative;min-width:0;overflow:hidden}
-.cell.hdr{background:var(--hdr-bg);font-size:10px;color:var(--hdr-text);font-weight:400}
+.cell.hdr{background:var(--hdr-bg);font-size:10px;color:var(--hdr-text);font-weight:400;aspect-ratio:auto}
 .cell.tile{background:var(--tile);color:#fff;border-radius:2px}
 .cell.tile.blank{background:var(--tile-blank)}
 .cell.new{background:var(--new-tile);color:#fff;border-radius:2px;box-shadow:inset 0 0 0 2px var(--new-border)}
@@ -83,9 +85,22 @@ PREM_COLORS_DARK = {
     "2L": ("#173404", "#C0DD97"),
 }
 
-TILE_PTS = {"A":1,"E":1,"I":1,"N":1,"O":1,"R":1,"S":1,"T":1,
-            "D":2,"L":2,"U":2,"B":3,"C":3,"H":3,"M":3,"P":3,
-            "F":4,"G":4,"Y":4,"W":5,"K":6,"V":6,"J":8,"X":8,"Q":10,"Z":10}
+DARK_MODE_SCRIPT = """<script>
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+function applyPrem(dark) {
+  document.querySelectorAll('.prem[data-dark-bg]').forEach(el => {
+    if (dark) {
+      el.style.background = el.dataset.darkBg;
+      el.style.color = el.dataset.darkFg;
+    } else {
+      el.style.background = el.dataset.lightBg;
+      el.style.color = el.dataset.lightFg;
+    }
+  });
+}
+mq.addEventListener('change', e => applyPrem(e.matches));
+document.addEventListener('DOMContentLoaded', () => applyPrem(mq.matches));
+</script>"""
 
 
 def prem_cell_html(prem_type):
@@ -93,6 +108,7 @@ def prem_cell_html(prem_type):
     bg_l, fg_l = PREM_COLORS_LIGHT[prem_type]
     bg_d, fg_d = PREM_COLORS_DARK[prem_type]
     return (f'<div class="cell prem" style="background:{bg_l};color:{fg_l}"'
+            f' data-light-bg="{bg_l}" data-light-fg="{fg_l}"'
             f' data-dark-bg="{bg_d}" data-dark-fg="{fg_d}">{prem_type}</div>')
 
 
@@ -144,7 +160,7 @@ def generate_board_confirm_html(board, premium, output_path, title="Board Confir
     """Generate an HTML page showing just the board for user confirmation (no moves)."""
     board = _norm_str_keys(board)
     premium = _norm_tuple_keys(premium)
-    parts = [CSS]
+    parts = [CSS, DARK_MODE_SCRIPT]
     parts.append(f'<h1>{title}</h1>')
     if subtitle:
         parts.append(f'<div class="subtitle">{subtitle}</div>')
@@ -174,25 +190,7 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
     board = _norm_str_keys(board)
     premium = _norm_tuple_keys(premium)
 
-    parts = [CSS]
-
-    # Dark mode script for premium squares
-    parts.append("""<script>
-const mq = window.matchMedia('(prefers-color-scheme: dark)');
-function applyPrem(dark) {
-  document.querySelectorAll('.prem[data-dark-bg]').forEach(el => {
-    if (dark) {
-      el.style.background = el.dataset.darkBg;
-      el.style.color = el.dataset.darkFg;
-    } else {
-      el.style.background = '';
-      el.style.color = '';
-    }
-  });
-}
-mq.addEventListener('change', e => applyPrem(e.matches));
-document.addEventListener('DOMContentLoaded', () => applyPrem(mq.matches));
-</script>""")
+    parts = [CSS, DARK_MODE_SCRIPT]
 
     parts.append(f'<h1>{title}</h1>')
     parts.append(f'<div class="subtitle">{subtitle}</div>')

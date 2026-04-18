@@ -31,7 +31,7 @@ def clone_if_needed(url, dest, label):
     if r.returncode == 0:
         print(f"  {label}: done")
         return True
-    print(f"  {label}: FAILED — {r.stderr.strip()}")
+    print(f"  {label}: FAILED - {r.stderr.strip()}")
     return False
 
 
@@ -113,7 +113,7 @@ def main():
         by_len.setdefault(len(w), 0)
         by_len[len(w)] += 1
 
-    print(f"\n✓ Dictionary: {args.output}")
+    print(f"\nOK Dictionary: {args.output}")
     print(f"  Source: {source}")
     print(f"  Words: {len(sorted_words)}")
     print(f"  By length: {', '.join(f'{k}:{v}' for k,v in sorted(by_len.items())[:6])}...")
