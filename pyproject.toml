@@ -1,0 +1,17 @@
+[project]
+name = "claude-crossplay"
+version = "0.1.0"
+description = "Claude AI skill for solving NYT Crossplay board positions."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "requests",
+]
+
+[dependency-groups]
+dev = []
+
+[tool.uv]
+package = false

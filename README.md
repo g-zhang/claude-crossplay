@@ -1,5 +1,5 @@
 # claude-crossplay
-A Claude AI [skill](src/SKILL.md) for solving [NYT Crossplay](https://www.nytimes.com/games/crossplay) board positions — finds the highest-scoring legal moves given a board screenshot and rack of tiles.
+A Claude AI [skill](core/SKILL.md) for solving [NYT Crossplay](https://www.nytimes.com/games/crossplay) board positions — finds the highest-scoring legal moves given a board screenshot and rack of tiles.
 
 > **Note:** This code was written by [Claude](https://claude.ai) (Anthropic's AI assistant) guided by user prompts.
 
@@ -18,17 +18,27 @@ Given a screenshot of a Crossplay board and your current tile rack, this skill:
 
 | Script | Purpose |
 |--------|---------|
-| [`setup_dict.py`](src/scripts/setup_dict.py) | Clones NWL23 word lists and builds `dict.txt` |
-| [`grid_overlay.py`](src/scripts/grid_overlay.py) | Draws a numbered grid on a board screenshot for manual tile reading |
-| [`solver.py`](src/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
-| [`moves_template.py`](src/scripts/moves_template.py) | Generates HTML board visualizations (light/dark mode) |
-| [`nwl23_ref.py`](src/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
+| [`setup_dict.py`](core/scripts/setup_dict.py) | Clones NWL23 word lists and builds `dict.txt` |
+| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid on a board screenshot for manual tile reading |
+| [`solver.py`](core/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
+| [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board visualizations (light/dark mode) |
+| [`nwl23_ref.py`](core/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
 
 ## Installation
 
-1. Go to the [latest release](https://github.com/g-zhang/claude-crossplay/releases/latest) and download `crossplay-solver.skill`
+Two distributions are available — install **one**:
+
+- **`crossplay-solver`** *(auto-updating scripts)* — a thin bootstrap skill
+  that clones this repo on first use and always runs the latest scripts
+  from `main`. Requires network access inside Claude's sandbox.
+- **`crossplay-solver-core`** *(offline scripts)* — the classic packaged
+  skill with scripts bundled directly. The scripts themselves need no
+  network, though `setup_dict.py` still fetches NWL23 from GitHub at
+  runtime for either distribution.
+
+1. Go to the [latest release](https://github.com/g-zhang/claude-crossplay/releases/latest) and download either `crossplay-solver.skill` or `crossplay-solver-core.skill`
 2. In Claude Desktop, open **Settings → Skills**
-3. Click **Add Skill** and select the downloaded `crossplay-solver.skill` file
+3. Click **Add Skill** and select the downloaded `.skill` file
 4. The skill is now available in your Claude conversations
 
 ## How to Use
@@ -50,16 +60,24 @@ Claude in the background will:
 ```bash
 pip install opencv-python numpy requests
 ```
+
+Or, with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync          # creates .venv and installs deps from pyproject.toml
+```
 ### Example
 ```bash
+# (from the repo root; all scripts live in core/scripts/)
+
 # 1. Build the dictionary (once per session)
-python scripts/setup_dict.py --output dict.txt
+python core/scripts/setup_dict.py --output dict.txt
 
 # 2. Generate a grid overlay for reading tile positions
-python scripts/grid_overlay.py screenshot.png -o overlay.png
+python core/scripts/grid_overlay.py screenshot.png -o overlay.png
 
 # 3. Run the solver (board.json must be constructed manually or by Claude)
-python scripts/solver.py \
+python core/scripts/solver.py \
     --board board.json \
     --rack AILETEC \
     --dict dict.txt \
@@ -86,17 +104,26 @@ Keys are `"row,col"` (0-indexed, 0 = top-left).
 A `.skill` file is a ZIP archive whose root contains the skill folder. The folder name should match the `name` field in `SKILL.md`.
 
 ```bash
-# From the repo root
+# Bootstrap (auto-updating) skill — zips src/
 cp -r src crossplay-solver
 zip -r crossplay-solver.skill crossplay-solver/
 rm -rf crossplay-solver
+
+# Core (offline) skill — zips core/
+cp -r core crossplay-solver-core
+zip -r crossplay-solver-core.skill crossplay-solver-core/
+rm -rf crossplay-solver-core
 ```
 
-This produces `crossplay-solver.skill` in the project root with the correct structure:
+This produces `crossplay-solver.skill` and `crossplay-solver-core.skill` in the project root with the correct structure:
 
 ```
 crossplay-solver.skill
 └── crossplay-solver/
+    └── SKILL.md          # bootstrap: sparse-clones the repo, delegates to core
+
+crossplay-solver-core.skill
+└── crossplay-solver-core/
     ├── SKILL.md
     └── scripts/
 ```

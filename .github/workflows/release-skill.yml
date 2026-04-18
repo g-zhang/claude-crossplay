@@ -16,14 +16,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Zip src/ into crossplay-solver.skill
+      - name: Zip src/ into crossplay-solver.skill (bootstrap)
         run: |
           cp -r src crossplay-solver
+          printf '\n---\n\n_Built from `%s` (`%s`) on `%s`._\n' \
+            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "$(date -u +%Y-%m-%d)" \
+            >> crossplay-solver/SKILL.md
           zip -r crossplay-solver.skill crossplay-solver/
           rm -rf crossplay-solver
+
+      - name: Zip core/ into crossplay-solver-core.skill (offline)
+        run: |
+          cp -r core crossplay-solver-core
+          printf '\n---\n\n_Built from `%s` (`%s`) on `%s`._\n' \
+            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "$(date -u +%Y-%m-%d)" \
+            >> crossplay-solver-core/SKILL.md
+          zip -r crossplay-solver-core.skill crossplay-solver-core/
+          rm -rf crossplay-solver-core
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: crossplay-solver.skill
+          files: |
+            crossplay-solver.skill
+            crossplay-solver-core.skill
           generate_release_notes: true
