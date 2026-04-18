@@ -119,6 +119,8 @@ python scripts/solver.py \
     -q
 ```
 
+**Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A–Z and scores the placed tile as 0 pts.
+
 **Flags:**
 - `--top N` — top N moves in summary table (default 10)
 - `-q` / `--quiet` — suppress board print, reduce output tokens (recommended when generating HTML visuals)

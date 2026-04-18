@@ -168,7 +168,12 @@ class WWFSolver:
         return word, sr, sc
 
     def verify_and_score(self, placements, direction):
-        """Verify a move and calculate its score."""
+        """Verify a move and calculate its score.
+
+        placements is list of (r, c, letter). Lowercase letter means the tile
+        came from a rack blank (scored 0, no premium); letters are uppercased
+        on the board during lookup so dict checks are case-insensitive.
+        """
         if not placements:
             return False, 0, '', []
 
@@ -176,9 +181,13 @@ class WWFSolver:
         dc = 1 if direction == 'H' else 0
         cdr, cdc = 1-dr, 1-dc
 
-        # Temporarily place tiles
+        # Blanks placed this turn (tracked by lowercase letter in placements)
+        placed_blanks = {(r, c) for r, c, letter in placements if letter.islower()}
+        all_blanks = self.blanks | placed_blanks
+
+        # Temporarily place tiles (always uppercase on the board)
         for r, c, letter in placements:
-            self.board[r][c] = letter
+            self.board[r][c] = letter.upper()
 
         # Get main word
         r0, c0 = placements[0][0], placements[0][1]
@@ -233,7 +242,7 @@ class WWFSolver:
             mw_score = 0; mw_mult = 1
             cr, cc = sr, sc
             for ch in main_word:
-                pts = 0 if (cr, cc) in self.blanks else TILE_PTS.get(ch, 0)
+                pts = 0 if (cr, cc) in all_blanks else TILE_PTS.get(ch, 0)
                 if (cr, cc) in placement_set:
                     pm = PREMIUM.get((cr, cc), '')
                     if pm == 'DL': pts *= 2
@@ -249,7 +258,7 @@ class WWFSolver:
                 cw_score = 0; cw_mult = 1
                 cr, cc = csr, csc
                 for ch in cw:
-                    pts = 0 if (cr, cc) in self.blanks else TILE_PTS.get(ch, 0)
+                    pts = 0 if (cr, cc) in all_blanks else TILE_PTS.get(ch, 0)
                     if (cr, cc) in placement_set:
                         pm = PREMIUM.get((cr, cc), '')
                         if pm == 'DL': pts *= 2
@@ -305,14 +314,14 @@ class WWFSolver:
                     self._build(sr, sc, dr, dc, direction, rack_counter,
                                 [], anchors, ar, ac)
 
-        # Deduplicate and sort
-        seen = set()
-        unique = []
+        # Deduplicate and sort. Same (word, positions, direction) with
+        # different blank-letter choices collapses to the max-scoring variant.
+        best = {}
         for score, word, placements, direction in self.moves:
-            key = (word, tuple(sorted((p[0],p[1]) for p in placements)), direction)
-            if key not in seen:
-                seen.add(key)
-                unique.append((score, word, placements, direction))
+            key = (word, frozenset((p[0], p[1]) for p in placements), direction)
+            if key not in best or score > best[key][0]:
+                best[key] = (score, word, placements, direction)
+        unique = list(best.values())
         unique.sort(key=lambda x: -x[0])
         return unique
 
@@ -331,21 +340,32 @@ class WWFSolver:
 
         cdr, cdc = 1-dr, 1-dc
         tried = set()
-        for letter in list(rack_left.keys()):
-            if rack_left[letter] > 0 and letter not in tried:
-                tried.add(letter)
-                self.board[r][c] = letter
-                cw, _, _ = self.get_word_at(r, c, cdr, cdc)
-                self.board[r][c] = '.'
-                if len(cw) >= 2 and cw not in self.valid_words:
-                    continue
+        for rack_letter in list(rack_left.keys()):
+            if rack_left[rack_letter] <= 0 or rack_letter in tried:
+                continue
+            tried.add(rack_letter)
 
-                rack_left[letter] -= 1
-                placements.append((r, c, letter))
+            # Blank: expand to every A-Z; placed letter is lowercase to mark it
+            # as from-blank for scoring. Non-blank: placement letter is uppercase.
+            if rack_letter == '?':
+                candidates = [(chr(o), chr(o).lower()) for o in range(ord('A'), ord('Z')+1)]
+            else:
+                candidates = [(rack_letter, rack_letter)]
+
+            rack_left[rack_letter] -= 1
+            for board_letter, placement_letter in candidates:
+                self.board[r][c] = board_letter
+                cw, _, _ = self.get_word_at(r, c, cdr, cdc)
+                if len(cw) >= 2 and cw not in self.valid_words:
+                    self.board[r][c] = '.'
+                    continue
+                self.board[r][c] = '.'
+
+                placements.append((r, c, placement_letter))
                 self._build(r+dr, c+dc, dr, dc, direction, rack_left,
                             placements, anchors, anchor_r, anchor_c)
                 placements.pop()
-                rack_left[letter] += 1
+            rack_left[rack_letter] += 1
 
     def _try_complete(self, placements, direction, anchor_r, anchor_c):
         if not placements:
@@ -369,8 +389,8 @@ def render_full_board_move(board, move, rank, blanks=None):
     new_tiles = {}
     tiles_used = []
     for r, c, letter in placements:
-        b[r][c] = letter
-        new_tiles[(r,c)] = letter
+        b[r][c] = letter.upper()
+        new_tiles[(r,c)] = letter  # preserve lowercase for blanks
         tiles_used.append(letter)
 
     # Header
@@ -395,7 +415,7 @@ def main():
     parser = argparse.ArgumentParser(description='Word Game Board Solver')
     parser.add_argument('--board', help='Path to board JSON file')
     parser.add_argument('--board-text', help='Path to board text file')
-    parser.add_argument('--rack', required=True, help='Rack letters')
+    parser.add_argument('--rack', required=True, help="Rack letters; use '?' for each blank tile")
     parser.add_argument('--dict', required=True, help='Path to dictionary file')
     parser.add_argument('--top', type=int, default=10, help='Top N moves')
     parser.add_argument('--full-board', action='store_true',
@@ -458,9 +478,9 @@ def main():
     print("-"*90)
     for i, (score, word, placements, d) in enumerate(all_moves[:args.top]):
         tiles_str = ", ".join(f"{p[2]}@({p[0]},{p[1]})" for p in placements)
-        # Get cross words
+        # Get cross words (place uppercase for dict-case consistency)
         for p in placements:
-            board[p[0]][p[1]] = p[2]
+            board[p[0]][p[1]] = p[2].upper()
         cdr_val = 1 if d == 'H' else 0
         cdc_val = 1 if d == 'V' else 0
         cw_list = []

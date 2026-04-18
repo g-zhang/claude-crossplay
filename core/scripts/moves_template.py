@@ -23,6 +23,7 @@ CSS = """<style>
   --tile: #4A90D9;
   --tile-blank: #6BA3E0;
   --new-tile: #E8913A;
+  --new-tile-blank: #F0A866;
   --new-border: #c47020;
   --star: #ccc;
 }
@@ -43,6 +44,7 @@ CSS = """<style>
     --tile: #3d7ec0;
     --tile-blank: #5590c8;
     --new-tile: #d4801f;
+    --new-tile-blank: #e09a3d;
     --new-border: #b86a15;
     --star: #555;
   }
@@ -59,6 +61,7 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell.tile{background:var(--tile);color:#fff;border-radius:2px}
 .cell.tile.blank{background:var(--tile-blank)}
 .cell.new{background:var(--new-tile);color:#fff;border-radius:2px;box-shadow:inset 0 0 0 2px var(--new-border)}
+.cell.new.blank{background:var(--new-tile-blank,#f0a866)}
 .cell.star{background:var(--hdr-bg);font-size:13px;color:var(--star)}
 .cell.empty{background:var(--cell-bg)}
 .cell.prem{font-size:8px;font-weight:500}
@@ -115,9 +118,12 @@ def prem_cell_html(prem_type):
 def cell_html(r, c, board, new_tiles, premium):
     key = f"{r},{c}"
     if key in new_tiles:
-        letter = new_tiles[key].upper()
-        pts = TILE_PTS.get(letter, 0)
-        return f'<div class="cell new">{letter}<span class="pts">{pts}</span></div>'
+        raw = new_tiles[key]
+        letter = raw.upper()
+        is_blank = raw.islower()
+        pts = 0 if is_blank else TILE_PTS.get(letter, 0)
+        cls = "cell new blank" if is_blank else "cell new"
+        return f'<div class="{cls}">{letter}<span class="pts">{pts}</span></div>'
     elif key in board:
         letter = board[key].upper()
         is_blank = board[key].islower()
