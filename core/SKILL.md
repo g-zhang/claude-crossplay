@@ -121,12 +121,12 @@ python scripts/solver.py \
 
 **Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A-Z and scores the placed tile as 0 pts.
 
-**Engines:** `--engine trie` (default) uses a forward dictionary trie that prunes main-word prefixes at every step. On a 2-blank rack that took ~500s under the old naive B&B engine, the trie engine finishes in ~1s. `--engine naive` keeps the original cell-by-cell search with branch-and-bound; it remains as a correctness fallback and is what equivalence tests compare against.
+**Engines:** `--engine trie` (default) uses a forward dictionary trie that prunes main-word prefixes at every step. On a 2-blank rack that took ~500s under the old naive B&B engine, the trie engine finishes in ~1s. `--engine gaddag` uses a bidirectional Gordon GADDAG with Appel-Jacobson leftmost-anchor discipline; it is correctness-equivalent to trie but runs roughly 2x slower in pure Python (the per-step constants in CPython outweigh the algorithmic advantage). `--engine naive` keeps the original cell-by-cell search with branch-and-bound; it remains as a correctness fallback and is what equivalence tests compare against.
 
 **2+ blanks in rack**: under `--engine trie` (the default) two blanks typically solve in seconds, so the time-budget prompt is just a safety net. If running under `--engine naive`, budget generously (60-300s) as before. If `--time-limit` expires under either engine, the solver returns partial best-so-far results and writes `WARNING: time limit reached ...` to stderr. When this happens, append `partial results (time-capped at Ns)` to the moves-HTML `subtitle`.
 
 **Flags:**
-- `--engine {trie,naive}` - move-gen engine (default `trie`)
+- `--engine {trie,gaddag,naive}` - move-gen engine (default `trie`)
 - `--top N` - top N moves in summary table (default 10)
 - `--time-limit SECONDS` - cooperative wall-clock stop (default `0` = unlimited)
 - `--no-prune` - disable branch-and-bound (naive engine only; diagnostic / equivalence testing)

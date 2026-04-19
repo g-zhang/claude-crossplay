@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Word Game Board Solver (NYT Crossplay / Words With Friends)
+NYT Crossplay Board Solver
 
 Usage:
-    python wwf_solver.py --board board.json --rack AILETEC --dict dict.txt [--top 20] [--full-board]
-    python wwf_solver.py --board board.json --dict dict.txt --rack X --confirm-only
+    python solver.py --board board.json --rack AILETEC --dict dict.txt [--top 20] [--full-board]
+    python solver.py --board board.json --dict dict.txt --rack X --confirm-only
 
 board.json format: {"row,col": "LETTER", ...}
   Use lowercase for blank tiles (0 pts): {"7,8": "k"}
@@ -21,6 +21,7 @@ from collections import Counter
 from pathlib import Path
 
 import wordtrie
+import gaddag as gaddag_mod
 
 # ============================================================
 # NYT Crossplay Tile Scores
@@ -158,10 +159,10 @@ def print_full_board(board, new_tiles=None, blanks=None, file=sys.stdout):
 # ============================================================
 # Core solver
 # ============================================================
-class WWFSolver:
+class BoardSolver:
     def __init__(self, board, rack, valid_words, prefixes, blanks=None,
                  top_n=10, time_limit=0, no_prune=False,
-                 engine='trie', trie=None):
+                 engine='trie', trie=None, gaddag=None):
         self.board = board
         self.rack = rack
         self.valid_words = valid_words
@@ -178,8 +179,9 @@ class WWFSolver:
         self.cross_masks = {}         # (r,c,dir) -> 26-bit mask of legal cross letters
         self.timed_out = False
         # Engine selection
-        self.engine = engine          # 'trie' (default) or 'naive'
+        self.engine = engine          # 'trie' (default), 'gaddag', or 'naive'
         self.trie = trie              # root dict if engine == 'trie'
+        self.gaddag = gaddag          # root dict if engine == 'gaddag'
 
     def get_word_at(self, r, c, dr, dc):
         """Get the full word passing through (r,c) in direction (dr,dc)."""
@@ -296,7 +298,7 @@ class WWFSolver:
                     cr += cdr; cc += cdc
                 score += cw_score * cw_mult
 
-            # 7-tile bonus (40 for Crossplay, 35 for WWF)
+            # 7-tile bonus (40 pts for Crossplay)
             if len(placements) == 7:
                 score += 40
 
@@ -382,6 +384,38 @@ class WWFSolver:
                             mask |= (1 << i)
                     self.board[r][c] = '.'
                     self.cross_masks[(r, c, direction)] = mask
+
+    def _precompute_left_limits(self, anchors):
+        """Appel-Jacobson per-anchor left-extent limits.
+
+        For each anchor (r, c) and each main-word direction, count the
+        number of tiles that may be PLACED strictly to the left of the
+        anchor along the main axis. The scan walks leftward one cell at
+        a time, starting at the cell immediately left of the anchor:
+
+          * stop on another anchor cell (don't count it);
+          * skip filled cells (don't count, don't stop) -- walked-through
+            existing tiles are pre-main-word prefix, not placements;
+          * increment on empty non-anchor cells;
+          * stop at the board edge.
+
+        Stored as self.left_limits[(r, c, direction)] -> int >= 0.
+        """
+        self.left_limits = {}
+        for ar, ac in anchors:
+            for direction in ('H', 'V'):
+                dr, dc = (0, 1) if direction == 'H' else (1, 0)
+                count = 0
+                r, c = ar - dr, ac - dc
+                while 0 <= r < 15 and 0 <= c < 15:
+                    if (r, c) in anchors:
+                        break
+                    if self.board[r][c] == '.':
+                        count += 1
+                    # Filled cell: skip without incrementing or breaking.
+                    r -= dr
+                    c -= dc
+                self.left_limits[(ar, ac, direction)] = count
 
     def _cross_score_for_placement(self, r, c, cdr, cdc, csr, csc,
                                    letter_val, letter_mult, word_mult):
@@ -481,6 +515,12 @@ class WWFSolver:
             if self.trie is None:
                 raise ValueError("engine='trie' requires a trie root to be set")
             self._precompute_cross_masks()
+        elif self.engine == 'gaddag':
+            if self.gaddag is None:
+                raise ValueError("engine='gaddag' requires a gaddag root to be set")
+            self._precompute_cross_masks()
+            # Left-extent limits are anchor-dependent; compute below once
+            # the anchor set is finalized.
         else:
             # Precompute max_cross for B&B bound (also cheap enough to keep even
             # under --no-prune; only ~11k dict lookups).
@@ -498,12 +538,22 @@ class WWFSolver:
         if not anchors and self.board[7][7] == '.':
             anchors.add((7, 7))
 
+        if self.engine == 'gaddag':
+            self._precompute_left_limits(anchors)
+
         try:
             for direction in ['H', 'V']:
                 dr = 0 if direction == 'H' else 1
                 dc = 1 if direction == 'H' else 0
 
                 for ar, ac in anchors:
+                    if self.engine == 'gaddag':
+                        # GADDAG walks both leftward (via SEP) and rightward
+                        # from the anchor internally. No `before` loop needed.
+                        self._build_gaddag(ar, ac, dr, dc, direction,
+                                           rack_counter)
+                        continue
+
                     max_before = 0
                     cr, cc = ar - dr, ac - dc
                     while (0<=cr<15 and 0<=cc<15 and self.board[cr][cc] == '.'
@@ -711,6 +761,174 @@ class WWFSolver:
                 placements.pop()
                 rack_left['?'] += 1
 
+    def _build_gaddag(self, ar, ac, dr, dc, direction, rack_left):
+        """Gordon GADDAG Gen/GoOn entry with Appel-Jacobson leftmost-anchor
+        discipline. Anchor cell is assumed empty.
+
+        The GADDAG is walked bidirectionally from the anchor:
+          * Leftward (offset <= 0) consumes the reversed-prefix arcs.
+          * A SEP arc switches to rightward (offset >= 1) for the suffix.
+
+        Left-extent limit (self.left_limits[(ar, ac, direction)]) caps
+        the number of tiles PLACED strictly to the left of the anchor
+        (offset < 0). This makes every word have exactly one "home
+        anchor" (the leftmost pre-move anchor in its placements), so
+        cross-anchor duplicate generation is eliminated at the source.
+        """
+        left_limit = self.left_limits[(ar, ac, direction)]
+        self._gen_left(ar, ac, dr, dc, direction, 0, self.gaddag,
+                       rack_left, [], ar, ac, left_limit, 0)
+
+    def _gen_left(self, ar, ac, dr, dc, direction, offset, node,
+                  rack_left, placements, anchor_r, anchor_c,
+                  left_limit, placed_left):
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise _TimeLimit()
+        r = ar + offset * dr
+        c = ac + offset * dc
+        if not (0 <= r < 15 and 0 <= c < 15):
+            return
+        if self.board[r][c] != '.':
+            # Walk through an existing tile. placed_left unchanged.
+            L = self.board[r][c]
+            child = node.get(L)
+            if child is None:
+                return
+            self._go_on_left(ar, ac, dr, dc, direction, offset, child,
+                             rack_left, placements, anchor_r, anchor_c,
+                             left_limit, placed_left)
+            return
+        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        has_q = rack_left.get('?', 0) > 0
+        # At offset == 0 (anchor), placement is always allowed. At
+        # offset < 0, only if placed_left < left_limit.
+        can_place = (offset == 0) or (placed_left < left_limit)
+        new_placed_left = placed_left if offset == 0 else placed_left + 1
+        for L, child in node.items():
+            if L == gaddag_mod.TERMINAL:
+                continue
+            if L == gaddag_mod.SEP:
+                # No placement at this offset; switch to rightward walk.
+                # Previous leftmost placement was at offset+1. Left walk
+                # counter is frozen at the handoff.
+                if placements:
+                    self._gen_right(ar, ac, dr, dc, direction, 1, child,
+                                    rack_left, placements,
+                                    anchor_r, anchor_c, offset + 1)
+                continue
+            if not can_place:
+                continue
+            bit = 1 << (ord(L) - ord('A'))
+            if not (cross_mask & bit):
+                continue
+            if rack_left.get(L, 0) > 0:
+                rack_left[L] -= 1
+                placements.append((r, c, L))
+                self._go_on_left(ar, ac, dr, dc, direction, offset, child,
+                                 rack_left, placements, anchor_r, anchor_c,
+                                 left_limit, new_placed_left)
+                placements.pop()
+                rack_left[L] += 1
+            if has_q:
+                rack_left['?'] -= 1
+                placements.append((r, c, L.lower()))
+                self._go_on_left(ar, ac, dr, dc, direction, offset, child,
+                                 rack_left, placements, anchor_r, anchor_c,
+                                 left_limit, new_placed_left)
+                placements.pop()
+                rack_left['?'] += 1
+
+    def _go_on_left(self, ar, ac, dr, dc, direction, offset, node,
+                    rack_left, placements, anchor_r, anchor_c,
+                    left_limit, placed_left):
+        # Emit: terminal reached on a full-reverse variant. Rightmost
+        # placement is at offset 0 (anchor); require both boundaries open.
+        if node.get(gaddag_mod.TERMINAL, False):
+            lr = ar + (offset - 1) * dr
+            lc = ac + (offset - 1) * dc
+            left_open = (not (0 <= lr < 15 and 0 <= lc < 15)
+                         or self.board[lr][lc] == '.')
+            rr = ar + dr
+            rc = ac + dc
+            right_open = (not (0 <= rr < 15 and 0 <= rc < 15)
+                          or self.board[rr][rc] == '.')
+            if left_open and right_open:
+                self._try_complete(placements, direction,
+                                   anchor_r, anchor_c)
+        # Continue leftward. placed_left is preserved; the next _gen_left
+        # will decide whether to increment based on what it does.
+        self._gen_left(ar, ac, dr, dc, direction, offset - 1, node,
+                       rack_left, placements, anchor_r, anchor_c,
+                       left_limit, placed_left)
+        # Or cross SEP here and walk rightward. Leftmost placement is
+        # the current offset (we just placed/walked into it). Counter is
+        # not passed to the right walk.
+        sep_child = node.get(gaddag_mod.SEP)
+        if sep_child is not None:
+            self._gen_right(ar, ac, dr, dc, direction, 1, sep_child,
+                            rack_left, placements,
+                            anchor_r, anchor_c, offset)
+
+    def _gen_right(self, ar, ac, dr, dc, direction, offset, node,
+                   rack_left, placements, anchor_r, anchor_c, leftmost):
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise _TimeLimit()
+        r = ar + offset * dr
+        c = ac + offset * dc
+        if not (0 <= r < 15 and 0 <= c < 15):
+            return
+        if self.board[r][c] != '.':
+            L = self.board[r][c]
+            child = node.get(L)
+            if child is None:
+                return
+            self._go_on_right(ar, ac, dr, dc, direction, offset, child,
+                              rack_left, placements,
+                              anchor_r, anchor_c, leftmost)
+            return
+        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        has_q = rack_left.get('?', 0) > 0
+        for L, child in node.items():
+            if L == gaddag_mod.TERMINAL or L == gaddag_mod.SEP:
+                continue
+            bit = 1 << (ord(L) - ord('A'))
+            if not (cross_mask & bit):
+                continue
+            if rack_left.get(L, 0) > 0:
+                rack_left[L] -= 1
+                placements.append((r, c, L))
+                self._go_on_right(ar, ac, dr, dc, direction, offset, child,
+                                  rack_left, placements,
+                                  anchor_r, anchor_c, leftmost)
+                placements.pop()
+                rack_left[L] += 1
+            if has_q:
+                rack_left['?'] -= 1
+                placements.append((r, c, L.lower()))
+                self._go_on_right(ar, ac, dr, dc, direction, offset, child,
+                                  rack_left, placements,
+                                  anchor_r, anchor_c, leftmost)
+                placements.pop()
+                rack_left['?'] += 1
+
+    def _go_on_right(self, ar, ac, dr, dc, direction, offset, node,
+                     rack_left, placements, anchor_r, anchor_c, leftmost):
+        if node.get(gaddag_mod.TERMINAL, False):
+            lr = ar + (leftmost - 1) * dr
+            lc = ac + (leftmost - 1) * dc
+            left_open = (not (0 <= lr < 15 and 0 <= lc < 15)
+                         or self.board[lr][lc] == '.')
+            rr = ar + (offset + 1) * dr
+            rc = ac + (offset + 1) * dc
+            right_open = (not (0 <= rr < 15 and 0 <= rc < 15)
+                          or self.board[rr][rc] == '.')
+            if left_open and right_open:
+                self._try_complete(placements, direction,
+                                   anchor_r, anchor_c)
+        self._gen_right(ar, ac, dr, dc, direction, offset + 1, node,
+                        rack_left, placements,
+                        anchor_r, anchor_c, leftmost)
+
     def _try_complete(self, placements, direction, anchor_r, anchor_c):
         if not placements:
             return
@@ -783,11 +1001,14 @@ def main():
                         help='Disable branch-and-bound pruning (debug / equivalence test). '
                              'Much slower but exhaustively explores every branch. '
                              'Naive engine only; ignored under --engine trie.')
-    parser.add_argument('--engine', choices=['trie', 'naive'], default='trie',
+    parser.add_argument('--engine', choices=['trie', 'gaddag', 'naive'], default='trie',
                         help='Move-generation engine. trie (default) uses a forward '
-                             'dictionary trie to prune main-word prefixes early. naive '
-                             'is the original cell-by-cell search with B&B pruning; '
-                             'kept for correctness equivalence testing.')
+                             'dictionary trie to prune main-word prefixes early. '
+                             'gaddag uses a bidirectional Gordon GADDAG, walking '
+                             'both left and right of each anchor without an outer '
+                             'before-loop. naive is the original cell-by-cell '
+                             'search with B&B pruning; kept for correctness '
+                             'equivalence testing.')
     # Legacy flags for backwards compatibility
     parser.add_argument('--ascii', action='store_true', help='(legacy) same as --full-board')
     parser.add_argument('--ascii-count', type=int, default=5, help='(legacy) same as --full-board-count')
@@ -820,6 +1041,7 @@ def main():
     print(f"Dictionary: {len(valid_words)} words")
 
     trie_root = None
+    gaddag_root = None
     if args.engine == 'trie':
         cache_path = Path(args.dict).with_suffix('.trie.pkl')
         t_trie = time.time()
@@ -831,6 +1053,17 @@ def main():
             trie_root = wordtrie.build_trie(valid_words)
             wordtrie.save_trie(trie_root, cache_path)
             print(f"Built + saved trie in {time.time()-t_trie:.1f}s")
+    elif args.engine == 'gaddag':
+        cache_path = Path(args.dict).with_suffix('.gaddag.pkl')
+        t_g = time.time()
+        if cache_path.exists():
+            gaddag_root = gaddag_mod.load_gaddag(cache_path)
+            print(f"Loaded gaddag cache: {cache_path.name} ({time.time()-t_g:.1f}s)")
+        else:
+            print(f"Building gaddag cache: {cache_path.name} ...")
+            gaddag_root = gaddag_mod.build_gaddag(valid_words)
+            gaddag_mod.save_gaddag(gaddag_root, cache_path)
+            print(f"Built + saved gaddag in {time.time()-t_g:.1f}s")
 
     if not args.quiet:
         print("\nCurrent board:")
@@ -838,10 +1071,11 @@ def main():
 
     print("\nFinding moves...")
     t0 = time.time()
-    solver = WWFSolver(board, rack, valid_words, prefixes, blanks,
+    solver = BoardSolver(board, rack, valid_words, prefixes, blanks,
                         top_n=args.top, time_limit=args.time_limit,
                         no_prune=args.no_prune,
-                        engine=args.engine, trie=trie_root)
+                        engine=args.engine, trie=trie_root,
+                        gaddag=gaddag_root)
     all_moves = solver.find_all_moves()
     elapsed = time.time() - t0
     print(f"Found {len(all_moves)} valid moves in {elapsed:.1f}s (engine={args.engine})")
