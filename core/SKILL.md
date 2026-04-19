@@ -116,13 +116,18 @@ python scripts/solver.py \
     --rack AILETEC \
     --dict dict.txt \
     --top 10 \
+    --time-limit 120 \
     -q
 ```
 
 **Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A–Z and scores the placed tile as 0 pts.
 
+**2+ blanks in rack**: before solving, ask the user for a time budget — suggest **60 / 120 / 300 / unlimited** seconds (fallback to `120` if no reply). Two blanks can produce ~17k+ legal moves; branch-and-bound pruning normally closes the search quickly, but the timer is a safety net. If `--time-limit` expires, the solver returns partial best-so-far results and writes `WARNING: time limit reached ...` to stderr. When this happens, append `⚠ partial results (time-capped at Ns)` to the moves-HTML `subtitle`.
+
 **Flags:**
 - `--top N` — top N moves in summary table (default 10)
+- `--time-limit SECONDS` — cooperative wall-clock stop (default `0` = unlimited; recommended `120` for 2-blank racks)
+- `--no-prune` — disable branch-and-bound (diagnostic only; much slower)
 - `-q` / `--quiet` — suppress board print, reduce output tokens (recommended when generating HTML visuals)
 - `--full-board` — full-board ASCII diagrams (only use for debugging, not needed with HTML output)
 - `--full-board-count N` — how many diagrams (default 3)

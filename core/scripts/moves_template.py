@@ -186,7 +186,7 @@ def generate_board_confirm_html(board, premium, output_path, title="Board Confir
   <div class="leg"><span class="leg-box" style="background:#EAF3DE;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#3B6D11">2L</span> Double Letter</div>
 </div>""")
     html = "\n".join(parts)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"Board confirmation written to {output_path}")
 
@@ -225,6 +225,6 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
         parts.append('</div>')
 
     html = "\n".join(parts)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"Written {len(moves)} moves to {output_path}")
