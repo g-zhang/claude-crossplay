@@ -116,22 +116,26 @@ python scripts/solver.py \
     --rack AILETEC \
     --dict dict.txt \
     --top 10 \
-    --time-limit 120 \
     -q
 ```
 
-**Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A–Z and scores the placed tile as 0 pts.
+**Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A-Z and scores the placed tile as 0 pts.
 
-**2+ blanks in rack**: before solving, ask the user for a time budget — suggest **60 / 120 / 300 / unlimited** seconds (fallback to `120` if no reply). Two blanks can produce ~17k+ legal moves; branch-and-bound pruning normally closes the search quickly, but the timer is a safety net. If `--time-limit` expires, the solver returns partial best-so-far results and writes `WARNING: time limit reached ...` to stderr. When this happens, append `⚠ partial results (time-capped at Ns)` to the moves-HTML `subtitle`.
+**Engines:** `--engine trie` (default) uses a forward dictionary trie that prunes main-word prefixes at every step. On a 2-blank rack that took ~500s under the old naive B&B engine, the trie engine finishes in ~1s. `--engine naive` keeps the original cell-by-cell search with branch-and-bound; it remains as a correctness fallback and is what equivalence tests compare against.
+
+**2+ blanks in rack**: under `--engine trie` (the default) two blanks typically solve in seconds, so the time-budget prompt is just a safety net. If running under `--engine naive`, budget generously (60-300s) as before. If `--time-limit` expires under either engine, the solver returns partial best-so-far results and writes `WARNING: time limit reached ...` to stderr. When this happens, append `partial results (time-capped at Ns)` to the moves-HTML `subtitle`.
 
 **Flags:**
-- `--top N` — top N moves in summary table (default 10)
-- `--time-limit SECONDS` — cooperative wall-clock stop (default `0` = unlimited; recommended `120` for 2-blank racks)
-- `--no-prune` — disable branch-and-bound (diagnostic only; much slower)
-- `-q` / `--quiet` — suppress board print, reduce output tokens (recommended when generating HTML visuals)
-- `--full-board` — full-board ASCII diagrams (only use for debugging, not needed with HTML output)
-- `--full-board-count N` — how many diagrams (default 3)
-- `--confirm-only` — just print board for confirmation, don't solve
+- `--engine {trie,naive}` - move-gen engine (default `trie`)
+- `--top N` - top N moves in summary table (default 10)
+- `--time-limit SECONDS` - cooperative wall-clock stop (default `0` = unlimited)
+- `--no-prune` - disable branch-and-bound (naive engine only; diagnostic / equivalence testing)
+- `-q` / `--quiet` - suppress board print, reduce output tokens (recommended when generating HTML visuals)
+- `--full-board` - full-board ASCII diagrams (only use for debugging, not needed with HTML output)
+- `--full-board-count N` - how many diagrams (default 3)
+- `--confirm-only` - just print board for confirmation, don't solve
+
+**Trie cache:** first solve builds `<dict>.trie.pkl` next to `dict.txt` (~2MB, a few seconds). Subsequent runs load the cache in well under a second. The dictionary is treated as static; delete the .pkl if you ever regenerate the dictionary.
 
 ### Step 6: Present results visually
 

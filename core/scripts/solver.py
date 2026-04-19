@@ -20,6 +20,8 @@ import heapq
 from collections import Counter
 from pathlib import Path
 
+import wordtrie
+
 # ============================================================
 # NYT Crossplay Tile Scores
 # Differences from Scrabble: G=4, J=10, V=6, B=4, K=6, L=2,
@@ -158,7 +160,8 @@ def print_full_board(board, new_tiles=None, blanks=None, file=sys.stdout):
 # ============================================================
 class WWFSolver:
     def __init__(self, board, rack, valid_words, prefixes, blanks=None,
-                 top_n=10, time_limit=0, no_prune=False):
+                 top_n=10, time_limit=0, no_prune=False,
+                 engine='trie', trie=None):
         self.board = board
         self.rack = rack
         self.valid_words = valid_words
@@ -170,9 +173,13 @@ class WWFSolver:
         self.time_limit = time_limit  # seconds; 0 = unlimited
         self.no_prune = no_prune
         self.deadline = None          # set in find_all_moves
-        self.top_heap = []            # min-heap of accepted-move scores (size ≤ top_n)
+        self.top_heap = []            # min-heap of accepted-move scores (size <= top_n)
         self.max_cross = {}           # (r,c,dir) -> upper bound on cross-word score
+        self.cross_masks = {}         # (r,c,dir) -> 26-bit mask of legal cross letters
         self.timed_out = False
+        # Engine selection
+        self.engine = engine          # 'trie' (default) or 'naive'
+        self.trie = trie              # root dict if engine == 'trie'
 
     def get_word_at(self, r, c, dr, dc):
         """Get the full word passing through (r,c) in direction (dr,dc)."""
@@ -338,6 +345,44 @@ class WWFSolver:
                     self.board[r][c] = '.'
                     self.max_cross[(r, c, direction)] = best
 
+    def _precompute_cross_masks(self):
+        """For each empty cell and each main-word direction, compute a
+        26-bit int mask where bit (L - 'A') is set iff placing letter L
+        here forms a valid cross-word in the perpendicular direction.
+
+        For cells with no perpendicular neighbor, no cross-word is formed
+        by any placement -- mask is all bits set (any letter is legal).
+
+        Distinct from max_cross: this is a legality mask, not a score. It
+        is used by the --engine trie path to prune placements whose
+        cross-word would be invalid, without having to score or even
+        string-match inside _build_trie.
+        """
+        ALL_BITS = (1 << 26) - 1
+        self.cross_masks = {}
+        for r in range(15):
+            for c in range(15):
+                if self.board[r][c] != '.':
+                    continue
+                for direction in ('H', 'V'):
+                    cdr, cdc = (1, 0) if direction == 'H' else (0, 1)
+                    has_above = (r - cdr >= 0 and c - cdc >= 0
+                                 and self.board[r - cdr][c - cdc] != '.')
+                    has_below = (r + cdr < 15 and c + cdc < 15
+                                 and self.board[r + cdr][c + cdc] != '.')
+                    if not (has_above or has_below):
+                        self.cross_masks[(r, c, direction)] = ALL_BITS
+                        continue
+                    mask = 0
+                    for i in range(26):
+                        letter = chr(ord('A') + i)
+                        self.board[r][c] = letter
+                        cw, _, _ = self.get_word_at(r, c, cdr, cdc)
+                        if len(cw) >= 2 and cw in self.valid_words:
+                            mask |= (1 << i)
+                    self.board[r][c] = '.'
+                    self.cross_masks[(r, c, direction)] = mask
+
     def _cross_score_for_placement(self, r, c, cdr, cdc, csr, csc,
                                    letter_val, letter_mult, word_mult):
         """Score a cross-word formed by placing a tile at (r,c). Caller is
@@ -432,9 +477,14 @@ class WWFSolver:
 
         self.deadline = (time.monotonic() + self.time_limit) if self.time_limit > 0 else None
 
-        # Precompute max_cross for B&B bound (also cheap enough to keep even
-        # under --no-prune; only ~11k dict lookups).
-        self._precompute_max_cross()
+        if self.engine == 'trie':
+            if self.trie is None:
+                raise ValueError("engine='trie' requires a trie root to be set")
+            self._precompute_cross_masks()
+        else:
+            # Precompute max_cross for B&B bound (also cheap enough to keep even
+            # under --no-prune; only ~11k dict lookups).
+            self._precompute_max_cross()
 
         anchors = set()
         for r in range(15):
@@ -467,15 +517,34 @@ class WWFSolver:
                         # Pre-main-word value: existing tiles immediately before sr
                         # that extend the main word. Walk back through contiguous tiles.
                         prefix_base = 0
+                        prefix_letters = []
                         pr, pc = sr - dr, sc - dc
                         while (0 <= pr < 15 and 0 <= pc < 15
                                and self.board[pr][pc] != '.'):
                             if (pr, pc) not in self.blanks:
                                 prefix_base += TILE_PTS[self.board[pr][pc]]
+                            prefix_letters.append(self.board[pr][pc])
                             pr -= dr; pc -= dc
-                        self._build(sr, sc, dr, dc, direction, rack_counter,
-                                    [], anchors, ar, ac,
-                                    prefix_base, 1, 0)
+
+                        if self.engine == 'trie':
+                            # Seed trie walk by traversing the fixed left-prefix
+                            # of existing tiles in forward order. If any arc is
+                            # missing, the whole branch is dead (no dict word
+                            # starts with this prefix).
+                            node = self.trie
+                            for L in reversed(prefix_letters):
+                                node = node.get(L)
+                                if node is None:
+                                    break
+                            if node is None:
+                                continue
+                            self._build_trie(sr, sc, dr, dc, direction,
+                                             rack_counter, [],
+                                             anchors, ar, ac, node)
+                        else:
+                            self._build(sr, sc, dr, dc, direction, rack_counter,
+                                        [], anchors, ar, ac,
+                                        prefix_base, 1, 0)
         except _TimeLimit:
             self.timed_out = True
             elapsed = time.monotonic() - (self.deadline - self.time_limit)
@@ -571,6 +640,77 @@ class WWFSolver:
                 placements.pop()
             rack_left[rack_letter] += 1
 
+    def _build_trie(self, r, c, dr, dc, direction, rack_left, placements,
+                    anchors, anchor_r, anchor_c, trie_node):
+        """Forward-trie-guided variant of _build.
+
+        Walks the trie in lockstep with the main-word cells along (dr, dc).
+        Every recursive call corresponds to a valid dictionary prefix,
+        which is the main win over the naive _build. Cross-words are
+        pruned via the 26-bit cross_masks precomputed once per solve.
+        Scoring and final validation remain in verify_and_score (called
+        by _try_complete) so this path never re-implements scoring.
+        """
+        # Deadline check (cooperative)
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise _TimeLimit()
+
+        if r < 0 or r >= 15 or c < 0 or c >= 15:
+            # Main word runs off the edge. Emit only if the trie node we
+            # are sitting on is terminal (i.e., the letters placed so far
+            # spell a valid word).
+            if trie_node.get('$', False):
+                self._try_complete(placements, direction, anchor_r, anchor_c)
+            return
+
+        if self.board[r][c] != '.':
+            # Walk through existing tile; trie arc must match.
+            L = self.board[r][c]
+            child = trie_node.get(L)
+            if child is None:
+                return
+            self._build_trie(r+dr, c+dc, dr, dc, direction, rack_left,
+                             placements, anchors, anchor_r, anchor_c, child)
+            return
+
+        # Empty cell. Option 1: the main word naturally ends before this
+        # cell (no placement here). Emit iff the current trie node is
+        # terminal -- that means the letters placed so far form a valid
+        # word and this empty cell provides the right-boundary.
+        if trie_node.get('$', False):
+            self._try_complete(placements, direction, anchor_r, anchor_c)
+
+        # Option 2: place a rack tile at (r, c) and recurse. Iterate over
+        # trie arcs (not all A-Z) -- each arc is a dictionary-valid next
+        # letter. Skip any letter not allowed by the cross-check mask.
+        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        has_q = rack_left.get('?', 0) > 0
+
+        for L, child in trie_node.items():
+            if L == '$':
+                continue
+            bit = 1 << (ord(L) - ord('A'))
+            if not (cross_mask & bit):
+                continue
+
+            if rack_left.get(L, 0) > 0:
+                rack_left[L] -= 1
+                placements.append((r, c, L))
+                self._build_trie(r+dr, c+dc, dr, dc, direction, rack_left,
+                                 placements, anchors, anchor_r, anchor_c,
+                                 child)
+                placements.pop()
+                rack_left[L] += 1
+
+            if has_q:
+                rack_left['?'] -= 1
+                placements.append((r, c, L.lower()))
+                self._build_trie(r+dr, c+dc, dr, dc, direction, rack_left,
+                                 placements, anchors, anchor_r, anchor_c,
+                                 child)
+                placements.pop()
+                rack_left['?'] += 1
+
     def _try_complete(self, placements, direction, anchor_r, anchor_c):
         if not placements:
             return
@@ -641,7 +781,13 @@ def main():
                              'On timeout, partial results are emitted with a stderr warning.')
     parser.add_argument('--no-prune', action='store_true',
                         help='Disable branch-and-bound pruning (debug / equivalence test). '
-                             'Much slower but exhaustively explores every branch.')
+                             'Much slower but exhaustively explores every branch. '
+                             'Naive engine only; ignored under --engine trie.')
+    parser.add_argument('--engine', choices=['trie', 'naive'], default='trie',
+                        help='Move-generation engine. trie (default) uses a forward '
+                             'dictionary trie to prune main-word prefixes early. naive '
+                             'is the original cell-by-cell search with B&B pruning; '
+                             'kept for correctness equivalence testing.')
     # Legacy flags for backwards compatibility
     parser.add_argument('--ascii', action='store_true', help='(legacy) same as --full-board')
     parser.add_argument('--ascii-count', type=int, default=5, help='(legacy) same as --full-board-count')
@@ -673,6 +819,19 @@ def main():
     valid_words, prefixes = load_dictionary(args.dict)
     print(f"Dictionary: {len(valid_words)} words")
 
+    trie_root = None
+    if args.engine == 'trie':
+        cache_path = Path(args.dict).with_suffix('.trie.pkl')
+        t_trie = time.time()
+        if cache_path.exists():
+            trie_root = wordtrie.load_trie(cache_path)
+            print(f"Loaded trie cache: {cache_path.name} ({time.time()-t_trie:.1f}s)")
+        else:
+            print(f"Building trie cache: {cache_path.name} ...")
+            trie_root = wordtrie.build_trie(valid_words)
+            wordtrie.save_trie(trie_root, cache_path)
+            print(f"Built + saved trie in {time.time()-t_trie:.1f}s")
+
     if not args.quiet:
         print("\nCurrent board:")
         print_board(board)
@@ -681,10 +840,11 @@ def main():
     t0 = time.time()
     solver = WWFSolver(board, rack, valid_words, prefixes, blanks,
                         top_n=args.top, time_limit=args.time_limit,
-                        no_prune=args.no_prune)
+                        no_prune=args.no_prune,
+                        engine=args.engine, trie=trie_root)
     all_moves = solver.find_all_moves()
     elapsed = time.time() - t0
-    print(f"Found {len(all_moves)} valid moves in {elapsed:.1f}s")
+    print(f"Found {len(all_moves)} valid moves in {elapsed:.1f}s (engine={args.engine})")
 
     if not all_moves:
         print("No valid moves found!")
