@@ -35,7 +35,7 @@ TILE_PTS = {
 }
 
 # Blank expansion order: English letter frequency (desc). Iterating ? candidates
-# in this order finds valid moves earlier → B&B top-N heap fills faster → more
+# in this order finds valid moves earlier -> B&B top-N heap fills faster -> more
 # pruning. Also produces better partial results when a time limit fires.
 BLANK_LETTER_ORDER = "ETAOINSHRDLCUMWFGYPBVKJXQZ"
 
@@ -46,7 +46,7 @@ class _TimeLimit(Exception):
 
 # ============================================================
 # NYT Crossplay Premium Squares (from empty board image analysis)
-# 56 total: 8×3W, 8×2W, 20×3L, 20×2L — fully symmetric
+# 56 total: 8x3W, 8x2W, 20x3L, 20x2L -- fully symmetric
 # Center (7,7) has no premium.
 # ============================================================
 PREMIUM = {}
@@ -67,6 +67,9 @@ for p in [(0,7),(2,4),(2,10),(3,3),(3,11),(4,2),(4,12),(5,7),
 
 # Map internal codes to display labels
 PREMIUM_DISPLAY = {'TW':'3W','DW':'2W','TL':'3L','DL':'2L'}
+
+# Precomputed bit mask per letter; saves ord()-on-every-step in hot loops.
+LETTER_BIT = {chr(ord('A') + i): 1 << i for i in range(26)}
 
 
 def load_dictionary(dict_path):
@@ -308,13 +311,106 @@ class BoardSolver:
 
         return valid, score, main_word, cross_words
 
+    def _score_only(self, placements, direction):
+        """Score a placement without revalidating word/connectivity.
+
+        Caller MUST guarantee:
+          1. main_word is in valid_words (trie/gaddag terminal nodes do)
+          2. every cross word is in valid_words (cross_masks built from
+             valid_words enforce this)
+          3. placements include the anchor cell, so connectivity to the
+             rest of the board is implicit (or anchor is the synthetic
+             (7,7) first-move case)
+
+        Used by trie/gaddag paths where validation is a redundant
+        ~37%-of-runtime cost (M0 profile finding). Returns
+        (score, main_word, cross_words). Score is 0 if the move is
+        somehow invalid (defensive; should not happen with a correct
+        caller).
+        """
+        if not placements:
+            return 0, '', []
+
+        dr = 0 if direction == 'H' else 1
+        dc = 1 if direction == 'H' else 0
+        cdr, cdc = 1 - dr, 1 - dc
+
+        placed_blanks = {(r, c) for r, c, letter in placements
+                         if letter.islower()}
+        all_blanks = self.blanks | placed_blanks
+        placement_set = {(p[0], p[1]) for p in placements}
+
+        for r, c, letter in placements:
+            self.board[r][c] = letter.upper()
+
+        r0, c0 = placements[0][0], placements[0][1]
+        main_word, sr, sc = self.get_word_at(r0, c0, dr, dc)
+
+        cross_words = []
+        for r, c, letter in placements:
+            cw, csr, csc = self.get_word_at(r, c, cdr, cdc)
+            if len(cw) >= 2:
+                cross_words.append((cw, csr, csc))
+
+        # Main word score
+        score = 0
+        mw_score = 0
+        mw_mult = 1
+        cr, cc = sr, sc
+        for ch in main_word:
+            pts = 0 if (cr, cc) in all_blanks else TILE_PTS.get(ch, 0)
+            if (cr, cc) in placement_set:
+                pm = PREMIUM.get((cr, cc), '')
+                if pm == 'DL':
+                    pts *= 2
+                elif pm == 'TL':
+                    pts *= 3
+                elif pm == 'DW':
+                    mw_mult *= 2
+                elif pm == 'TW':
+                    mw_mult *= 3
+            mw_score += pts
+            cr += dr
+            cc += dc
+        score += mw_score * mw_mult
+
+        # Cross word scores
+        for cw, csr, csc in cross_words:
+            cw_score = 0
+            cw_mult = 1
+            cr, cc = csr, csc
+            for ch in cw:
+                pts = 0 if (cr, cc) in all_blanks else TILE_PTS.get(ch, 0)
+                if (cr, cc) in placement_set:
+                    pm = PREMIUM.get((cr, cc), '')
+                    if pm == 'DL':
+                        pts *= 2
+                    elif pm == 'TL':
+                        pts *= 3
+                    elif pm == 'DW':
+                        cw_mult *= 2
+                    elif pm == 'TW':
+                        cw_mult *= 3
+                cw_score += pts
+                cr += cdr
+                cc += cdc
+            score += cw_score * cw_mult
+
+        if len(placements) == 7:
+            score += 40
+
+        for r, c, letter in placements:
+            self.board[r][c] = '.'
+
+        return score, main_word, cross_words
+
     def _precompute_max_cross(self):
         """For each empty cell and each play direction, compute an upper bound
         on the cross-word score any tile placed there could generate. Used by
         B&B upper-bound pruning in _build.
 
-        Takes max over A-Z — this is safe: any actual placement (including a
-        rack blank, which scores 0 for the placed letter) produces a score ≤
+        Takes max over A-Z -- this is safe: any actual placement (including a
+        rack blank, which scores 0 for the placed letter) produces a score <=
         this max.
         """
         self.max_cross = {}
@@ -362,6 +458,11 @@ class BoardSolver:
         """
         ALL_BITS = (1 << 26) - 1
         self.cross_masks = {}
+        # Flat 15x15 lists for hot-path access (opt-B). H plane = mask
+        # used when the main-word direction is H. Default 0 (filled cell
+        # never placed on; loop guards prevent access there anyway).
+        self.cross_masks_h = [[0]*15 for _ in range(15)]
+        self.cross_masks_v = [[0]*15 for _ in range(15)]
         for r in range(15):
             for c in range(15):
                 if self.board[r][c] != '.':
@@ -374,6 +475,10 @@ class BoardSolver:
                                  and self.board[r + cdr][c + cdc] != '.')
                     if not (has_above or has_below):
                         self.cross_masks[(r, c, direction)] = ALL_BITS
+                        if direction == 'H':
+                            self.cross_masks_h[r][c] = ALL_BITS
+                        else:
+                            self.cross_masks_v[r][c] = ALL_BITS
                         continue
                     mask = 0
                     for i in range(26):
@@ -384,6 +489,10 @@ class BoardSolver:
                             mask |= (1 << i)
                     self.board[r][c] = '.'
                     self.cross_masks[(r, c, direction)] = mask
+                    if direction == 'H':
+                        self.cross_masks_h[r][c] = mask
+                    else:
+                        self.cross_masks_v[r][c] = mask
 
     def _precompute_left_limits(self, anchors):
         """Appel-Jacobson per-anchor left-extent limits.
@@ -420,13 +529,13 @@ class BoardSolver:
     def _cross_score_for_placement(self, r, c, cdr, cdc, csr, csc,
                                    letter_val, letter_mult, word_mult):
         """Score a cross-word formed by placing a tile at (r,c). Caller is
-        responsible for having verified cw is valid (length ≥ 2, in dict).
+        responsible for having verified cw is valid (length >= 2, in dict).
 
         letter_val is the new tile's raw points (0 for blank). letter_mult is
         the letter premium multiplier at (r,c). word_mult is the word premium
         multiplier at (r,c) (DW/TW, only applied from this new tile).
 
-        Board is assumed to have the placed letter set at (r,c) OR not — we
+        Board is assumed to have the placed letter set at (r,c) OR not -- we
         don't read board[r][c]; we use letter_val directly.
         """
         total = letter_val * letter_mult
@@ -446,7 +555,7 @@ class BoardSolver:
         - existing_ahead_value: fixed letter values at existing tiles we'd pass
         - empty_ahead_count: cells we could place a new tile on
         - letter_mults_ahead, word_mult_ahead: premium contributions
-        - cross_sum: Σ max_cross[cell][direction] over empty cells ahead
+        - cross_sum: Sum  max_cross[cell][direction] over empty cells ahead
         Then pairs the top-k rack letter values with the top-k letter
         multipliers greedily for an optimal per-rearrangement-inequality
         upper bound on main-word letter score from future placements.
@@ -624,7 +733,7 @@ class BoardSolver:
             self._try_complete(placements, direction, anchor_r, anchor_c)
             return
 
-        # B&B prune: once top-N heap is saturated, skip branches whose UB ≤ threshold.
+        # B&B prune: once top-N heap is saturated, skip branches whose UB <= threshold.
         if (not self.no_prune and self.top_n > 0
                 and len(self.top_heap) >= self.top_n):
             ub = self._compute_ub(r, c, dr, dc, direction, rack_left, placements,
@@ -733,13 +842,13 @@ class BoardSolver:
         # Option 2: place a rack tile at (r, c) and recurse. Iterate over
         # trie arcs (not all A-Z) -- each arc is a dictionary-valid next
         # letter. Skip any letter not allowed by the cross-check mask.
-        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        cross_mask = self.cross_masks_h[r][c] if direction == 'H' else self.cross_masks_v[r][c]
         has_q = rack_left.get('?', 0) > 0
 
         for L, child in trie_node.items():
             if L == '$':
                 continue
-            bit = 1 << (ord(L) - ord('A'))
+            bit = LETTER_BIT[L]
             if not (cross_mask & bit):
                 continue
 
@@ -798,7 +907,7 @@ class BoardSolver:
                              rack_left, placements, anchor_r, anchor_c,
                              left_limit, placed_left)
             return
-        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        cross_mask = self.cross_masks_h[r][c] if direction == 'H' else self.cross_masks_v[r][c]
         has_q = rack_left.get('?', 0) > 0
         # At offset == 0 (anchor), placement is always allowed. At
         # offset < 0, only if placed_left < left_limit.
@@ -818,7 +927,7 @@ class BoardSolver:
                 continue
             if not can_place:
                 continue
-            bit = 1 << (ord(L) - ord('A'))
+            bit = LETTER_BIT[L]
             if not (cross_mask & bit):
                 continue
             if rack_left.get(L, 0) > 0:
@@ -886,12 +995,12 @@ class BoardSolver:
                               rack_left, placements,
                               anchor_r, anchor_c, leftmost)
             return
-        cross_mask = self.cross_masks.get((r, c, direction), (1 << 26) - 1)
+        cross_mask = self.cross_masks_h[r][c] if direction == 'H' else self.cross_masks_v[r][c]
         has_q = rack_left.get('?', 0) > 0
         for L, child in node.items():
             if L == gaddag_mod.TERMINAL or L == gaddag_mod.SEP:
                 continue
-            bit = 1 << (ord(L) - ord('A'))
+            bit = LETTER_BIT[L]
             if not (cross_mask & bit):
                 continue
             if rack_left.get(L, 0) > 0:
@@ -934,8 +1043,13 @@ class BoardSolver:
             return
         if not any(p[0]==anchor_r and p[1]==anchor_c for p in placements):
             return
-        valid, score, main_word, cross_words = self.verify_and_score(
-            list(placements), direction)
+        if self.engine in ('trie', 'gaddag'):
+            score, main_word, cross_words = self._score_only(
+                list(placements), direction)
+            valid = score > 0
+        else:
+            valid, score, main_word, cross_words = self.verify_and_score(
+                list(placements), direction)
         if valid and score > 0:
             self.moves.append((score, main_word, list(placements), direction))
             # Maintain top-N min-heap for B&B pruning threshold.
@@ -970,7 +1084,7 @@ def render_full_board_move(board, move, rank, blanks=None):
     pm_str = "  " + ", ".join(premium_info) if premium_info else ""
 
     buf = io.StringIO()
-    print(f"#{rank}: {word} — {score} pts ({direction}){pm_str}", file=buf)
+    print(f"#{rank}: {word} -- {score} pts ({direction}){pm_str}", file=buf)
     print(f"    Tiles placed: {', '.join(tiles_used)}", file=buf)
     print_full_board(b, new_tiles, blanks, file=buf)
     return buf.getvalue()

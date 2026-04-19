@@ -211,7 +211,7 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
 
     for i, move in enumerate(moves):
         parts.append('<div class="move-section">')
-        parts.append(f'<div class="move-header">#{i+1}: <strong>{move["word"]}</strong> — {move["pts"]} pts ({move["dir"]})</div>')
+        parts.append(f'<div class="move-header">#{i+1}: <strong>{move["word"]}</strong> -- {move["pts"]} pts ({move["dir"]})</div>')
         parts.append('<div class="board"><div class="cell hdr"></div>')
         for c in range(15):
             parts.append(f'<div class="cell hdr">{c}</div>')
