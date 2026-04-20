@@ -183,6 +183,23 @@ Each move diagram shows:
 | 8 | X |
 | 10 | J, Q, Z |
 
+## NYT Crossplay Tile Distribution
+
+100 tiles total (including 3 blanks). Starting rack is 7 tiles per
+player.
+
+| Count | Letters |
+|-------|---------|
+| 12 | E |
+| 9 | A |
+| 8 | I, O |
+| 6 | R, T |
+| 5 | N, S |
+| 4 | D, L |
+| 3 | G, H, U, BLANK |
+| 2 | B, C, F, M, P, V, W, Y |
+| 1 | J, K, Q, X, Z |
+
 ## NYT Crossplay Premium Layout (56 squares, fully symmetric)
 
 | Type | Positions |
@@ -198,10 +215,10 @@ Each move diagram shows:
 - **Word premiums (2W, 3W)**: multiply the entire word. Multiple word premiums stack.
 - Premiums only apply to NEW tiles, not existing board tiles.
 - Cross-words get premiums from newly placed tiles too.
-- All 7 tiles in one play = **40-point bonus** (Crossplay).
+- All 7 tiles in one play = **40-point bonus**.
 - Center (7,7) has **no premium**.
 
-## Endgame Rules (Crossplay)
+## Endgame Rules
 
 - The game ends when the tile bag is empty and each player has had one more turn.
 - There is **no penalty** for remaining tiles at end of game. Do not factor rack-leave point deductions into endgame strategy.
