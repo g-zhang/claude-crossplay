@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 WORDS_REPO = "https://github.com/scrabblewords/scrabblewords.git"
-WORDS_DIR  = "/home/claude/scrabblewords"
+WORDS_DIR  = os.environ.get("CROSSPLAY_WORDS_DIR", "/home/claude/scrabblewords")
 NWL_PATH   = "words/North-American"
 UPLOAD_DIR  = "/mnt/user-data/uploads"
 

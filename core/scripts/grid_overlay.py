@@ -40,7 +40,14 @@ def find_board_region(image):
     row_indices = np.where(row_sums > row_threshold)[0]
 
     if len(col_indices) < 10 or len(row_indices) < 10:
-        x1, x2, y1 = int(w * 0.02), int(w * 0.98), int(h * 0.25)
+        x1, x2 = int(w * 0.02), int(w * 0.98)
+        # Top is unreliable from edges here; locate the board's first row by
+        # the first blue-tile band, ignoring the rack in the bottom fifth.
+        hsv_full = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        blue = cv2.inRange(hsv_full, np.array([85, 55, 80]), np.array([130, 255, 255]))
+        row_blue = blue[: int(h * 0.8), x1:x2].mean(axis=1) / 255.0
+        band = np.where(row_blue > 0.04)[0]
+        y1 = int(band[0]) if len(band) else int(h * 0.25)
         y2 = y1 + (x2 - x1)
         return x1, y1, x2 - x1, y2 - y1
 
