@@ -1,0 +1,18 @@
+name: Notify private tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger crossplay-private test run
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CROSSPLAY_PRIVATE_DISPATCH_TOKEN }}
+          repository: g-zhang/crossplay-private
+          event-type: core-updated
+          client-payload: '{"sha": "${{ github.sha }}"}'
