@@ -9,10 +9,19 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
+      - name: Mint short-lived app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DISPATCH_APP_ID }}
+          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
+          owner: g-zhang
+          repositories: crossplay-private
+
       - name: Trigger crossplay-private test run
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.CROSSPLAY_PRIVATE_DISPATCH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           repository: g-zhang/crossplay-private
           event-type: core-updated
           client-payload: '{"sha": "${{ github.sha }}"}'
