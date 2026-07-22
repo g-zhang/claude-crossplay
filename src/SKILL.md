@@ -1,83 +1,91 @@
 ---
 name: crossplay-solver
-description: Solve NYT Crossplay board positions — find the highest-scoring legal moves given a board screenshot and a rack of tiles. This is a bootstrap skill that clones the latest solver scripts and full skill instructions from GitHub on first use, so it's always up to date. Use this skill whenever the user mentions NYT Crossplay, Crossplay, or shares a screenshot of a Crossplay board and asks what to play, or references rack letters and wants move suggestions. Also use when the user asks dictionary questions like "words ending in Z" or "4 letter words with Q", or asks for hints/ideas on a Crossplay board. This skill handles board reconstruction from images, NWL23 dictionary setup, cross-word validation, premium square scoring, and visual HTML output of recommended plays.
+description: >-
+  Solve NYT Crossplay board positions and answer Crossplay or NWL23 rack and
+  word-list questions. Use whenever the user mentions NYT Crossplay or
+  Crossplay, provides a Crossplay board screenshot, asks for a best play or a
+  hint, or asks a word-game lookup involving rack letters or NWL23. Do not use
+  for multiplayer cross-platform compatibility, unrelated crosswords, or
+  Scrabble boards. Use for a general dictionary question only when the user
+  explicitly invokes this skill. This bootstrap fetches the current solver
+  workflow and scripts from GitHub before use.
+compatibility: >-
+  Requires git, a POSIX shell, outbound HTTPS access to github.com, and a
+  writable temporary directory. The fetched core requires Python 3.8+,
+  opencv-python, numpy, and requests.
 ---
 
-# NYT Crossplay Solver — Bootstrap
+# NYT Crossplay Solver Bootstrap
 
-This is a thin bootstrap skill. It fetches the latest solver scripts from
-GitHub and then delegates to the full `crossplay-solver-core` skill
-definition that lives in the repo. This way the workflow is always up to
-date without reinstalling the skill.
+Refresh the solver from its source repository, then follow the fetched core
+skill. Keeping the bootstrap small lets fixes to board reading, scoring, and
+presentation reach users without reinstalling the skill.
 
-## Step 0: Fetch latest sources (once per session)
+## 1. Fetch the current core once per conversation
 
-Run this once per session. It's idempotent — if the clone already exists,
-it is reused.
+Use a dedicated temporary checkout. Pulling an existing checkout matters
+because reusing it without a refresh can silently run stale solver
+instructions.
 
 ```bash
-SRC=/home/claude/claude-crossplay-src
-if [ ! -d "$SRC/.git" ]; then
+SRC="${TMPDIR:-/tmp}/claude-crossplay-src"
+if [ -d "$SRC/.git" ]; then
+  git -C "$SRC" pull --ff-only
+else
   git clone --depth 1 --filter=blob:none --sparse \
-    https://github.com/g-zhang/claude-crossplay "$SRC" \
-    && git -C "$SRC" sparse-checkout set core
+    https://github.com/g-zhang/claude-crossplay "$SRC"
+  git -C "$SRC" sparse-checkout set core
 fi
 ```
 
-If the clone fails (e.g. no network access, GitHub unreachable), stop and
-tell the user. The solver cannot run without these scripts.
+Check every command's exit status. If cloning or refreshing fails, stop and
+show the error instead of running a partial or stale checkout.
 
-## Step 1: Delegate to the core skill
+## 2. Follow the core skill
 
-Read `/home/claude/claude-crossplay-src/core/SKILL.md` and follow its
-instructions verbatim for the rest of the task. Wherever that file
-references `<SKILL_DIR>`, substitute
-`/home/claude/claude-crossplay-src/core`.
+Remember the resolved `$SRC` path as `<SOURCE_DIR>`. Read
+`<SOURCE_DIR>/core/SKILL.md` and follow it for the rest of the task. Substitute
+`<SOURCE_DIR>/core` for every `<SKILL_DIR>` reference in that file.
 
-That includes mode detection (Dictionary / Hint / Full Solver), the full
-6-step solver workflow, board confirmation, scoring rules, and the NWL23
-reference module — everything lives in the cloned `core/SKILL.md` and its
-`scripts/` directory.
+The core skill selects Dictionary, Hint, or Full Solver mode and owns the
+complete board-confirmation and solving workflow.
 
-## Bug reporting
+## Report a problem
 
-When the user reports a bug, asks how to file an issue, or says
-something went wrong, help them assemble a report with version info so
-the maintainer can trace the exact build. File at:
-**https://github.com/g-zhang/claude-crossplay/issues**
+When the user reports a failure, prepare a reproducible report for
+https://github.com/g-zhang/claude-crossplay/issues.
 
-Gather both versions — the bootstrap has its own stamped footer, and
-the cloned core must be identified via git:
+Collect:
 
-1. **Bootstrap version** — the last line of this `SKILL.md` file is a
-   footer stamped at release time, e.g.
-   `_Built from `v1.2.3` (`<40-char sha>`) on `2026-04-17`._`.
-   Copy it verbatim. If the footer is absent, this is a local/dev
-   install — say so.
+1. **Bootstrap version:** Copy the final non-empty `_Built from ..._` footer
+   from this file. If it is absent, identify the install as local or
+   development.
+2. **Fetched core version:** Run:
 
-2. **Core version** — run:
    ```bash
-   git -C /home/claude/claude-crossplay-src rev-parse HEAD
-   git -C /home/claude/claude-crossplay-src log -1 --format=%cI
+   git -C "<SOURCE_DIR>" rev-parse HEAD
+   git -C "<SOURCE_DIR>" log -1 --format=%cI
    ```
-   for the commit SHA and committer timestamp of the cloned `core/`.
-   If the directory doesn't exist, the bug occurred before Step 0
-   completed — say so instead.
 
-Then present this ready-to-paste template to the user:
+   If the checkout does not exist, say the failure happened before the fetch
+   completed.
+3. **Reproduction details:** Include the prompt, relevant screenshot, exact
+   error or incorrect output, and expected behavior.
 
-```
+Use this ready-to-paste structure:
+
+```text
 ### Environment
 - Skill: crossplay-solver (bootstrap)
-- Bootstrap: <footer line verbatim>
-- Core (cloned): <sha>  committed <iso-timestamp>
+- Bootstrap: <footer or local/development>
+- Core: <commit SHA> committed <ISO timestamp>
 
 ### What I did
-<brief description; attach screenshot if relevant>
+<steps and screenshot>
 
 ### What happened
-<error message or wrong output>
+<error or incorrect output>
 
 ### What I expected
-<…>
+<expected behavior>
 ```

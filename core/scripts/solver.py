@@ -74,7 +74,7 @@ LETTER_BIT = {chr(ord('A') + i): 1 << i for i in range(26)}
 
 def load_dictionary(dict_path):
     """Load dictionary and build prefix set."""
-    with open(dict_path) as f:
+    with open(dict_path, encoding="utf-8") as f:
         words = set(line.strip().upper() for line in f if line.strip())
     prefixes = set()
     for w in words:
@@ -87,7 +87,7 @@ def load_board_json(path):
     """Load board from JSON format. Lowercase letters = blank tiles (0 pts)."""
     board = [['.']*15 for _ in range(15)]
     blanks = set()
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     for key, letter in data.get("tiles", data).items():
         parts = key.split(',')
@@ -102,7 +102,7 @@ def load_board_text(path):
     """Load board from 15-line text file (. = empty). Lowercase = blank."""
     board = [['.']*15 for _ in range(15)]
     blanks = set()
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = [l.rstrip('\n') for l in f.readlines()]
     for r, line in enumerate(lines[:15]):
         for c, ch in enumerate(line[:15]):
@@ -1090,6 +1090,81 @@ def render_full_board_move(board, move, rank, blanks=None):
     return buf.getvalue()
 
 
+def get_cross_words_for_move(board, solver, placements, direction):
+    """Return the cross words formed by one move."""
+    for r, c, letter in placements:
+        board[r][c] = letter.upper()
+    try:
+        cross_dr = 1 if direction == 'H' else 0
+        cross_dc = 1 if direction == 'V' else 0
+        cross_words = []
+        for r, c, _ in placements:
+            word, _, _ = solver.get_word_at(r, c, cross_dr, cross_dc)
+            if len(word) >= 2:
+                cross_words.append(word)
+        return sorted(set(cross_words))
+    finally:
+        for r, c, _ in placements:
+            board[r][c] = '.'
+
+
+def build_move_record(board, solver, rack, move):
+    """Convert a solver move to the JSON schema used by moves_template.py."""
+    score, word, placements, direction = move
+    cross_words = get_cross_words_for_move(
+        board, solver, placements, direction
+    )
+    if direction == 'H':
+        direction_label = f"across, row {placements[0][0]}"
+    else:
+        direction_label = f"down, column {placements[0][1]}"
+
+    leave = list(rack)
+    premium_notes = []
+    for r, c, letter in placements:
+        rack_tile = '?' if letter.islower() else letter.upper()
+        if rack_tile in leave:
+            leave.remove(rack_tile)
+        premium_type = PREMIUM.get((r, c))
+        if premium_type:
+            premium_notes.append(
+                f"{letter.upper()} on {PREMIUM_DISPLAY[premium_type]}"
+            )
+
+    if premium_notes:
+        note = f"Premiums: {', '.join(premium_notes)}. "
+    else:
+        note = "No premium square. "
+    if len(placements) == 7:
+        note += "Seven-tile play: 40-point bonus. "
+    leave_text = ", ".join(
+        "blank" if letter == '?' else letter for letter in leave
+    )
+    note += f"Rack leave: {leave_text or 'empty'}."
+
+    return {
+        "word": word,
+        "pts": score,
+        "dir": direction_label,
+        "tiles": {
+            f"{r},{c}": letter
+            for r, c, letter in placements
+        },
+        "cross": ", ".join(cross_words) if cross_words else "-",
+        "note": note,
+    }
+
+
+def write_moves_json(path, moves):
+    """Write rendered move data to a UTF-8 JSON file."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump({"moves": moves}, f, indent=2)
+        f.write("\n")
+    print(f"Move JSON written to: {output_path}")
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -1097,8 +1172,8 @@ def main():
     parser = argparse.ArgumentParser(description='Word Game Board Solver')
     parser.add_argument('--board', help='Path to board JSON file')
     parser.add_argument('--board-text', help='Path to board text file')
-    parser.add_argument('--rack', required=True, help="Rack letters; use '?' for each blank tile")
-    parser.add_argument('--dict', required=True, help='Path to dictionary file')
+    parser.add_argument('--rack', help="Rack letters; use '?' for each blank tile")
+    parser.add_argument('--dict', help='Path to dictionary file')
     parser.add_argument('--top', type=int, default=10, help='Top N moves')
     parser.add_argument('--full-board', action='store_true',
                         help='Show full-board ASCII with premium squares')
@@ -1108,6 +1183,8 @@ def main():
                         help='Just print the board for confirmation, do not solve')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='Suppress board print and reduce output (use with HTML rendering)')
+    parser.add_argument('--json-output',
+                        help='Write top moves as renderer-compatible JSON')
     parser.add_argument('--time-limit', type=int, default=0, metavar='SECONDS',
                         help='Wall-clock cap on solve time (0 = unlimited, default). '
                              'On timeout, partial results are emitted with a stderr warning.')
@@ -1146,6 +1223,9 @@ def main():
         print("\nCurrent board (confirm with user before solving):")
         print_full_board(board, blanks=blanks)
         return
+
+    if not args.rack or not args.dict:
+        parser.error("--rack and --dict are required unless --confirm-only is used")
 
     rack = list(args.rack.upper())
     print(f"Rack: {' '.join(rack)}")
@@ -1195,29 +1275,28 @@ def main():
     print(f"Found {len(all_moves)} valid moves in {elapsed:.1f}s (engine={args.engine})")
 
     if not all_moves:
+        if args.json_output:
+            write_moves_json(args.json_output, [])
         print("No valid moves found!")
         return
 
+    top_moves = all_moves[:args.top]
+    move_records = [
+        build_move_record(board, solver, rack, move)
+        for move in top_moves
+    ]
+    if args.json_output:
+        write_moves_json(args.json_output, move_records)
+
     # Show top moves table
-    print(f"\nTop {min(args.top, len(all_moves))} moves:")
+    print(f"\nTop {len(top_moves)} moves:")
     print(f"{'#':>3} {'Pts':>4} {'Word':<15} {'Dir':<4} {'Tiles placed':<30} {'Cross words'}")
     print("-"*90)
-    for i, (score, word, placements, d) in enumerate(all_moves[:args.top]):
+    paired_moves = zip(top_moves, move_records)
+    for i, ((score, word, placements, d), record) in enumerate(paired_moves):
         tiles_str = ", ".join(f"{p[2]}@({p[0]},{p[1]})" for p in placements)
-        # Get cross words (place uppercase for dict-case consistency)
-        for p in placements:
-            board[p[0]][p[1]] = p[2].upper()
-        cdr_val = 1 if d == 'H' else 0
-        cdc_val = 1 if d == 'V' else 0
-        cw_list = []
-        for p in placements:
-            cw, _, _ = solver.get_word_at(p[0], p[1], cdr_val, cdc_val)
-            if len(cw) >= 2:
-                cw_list.append(cw)
-        for p in placements:
-            board[p[0]][p[1]] = '.'
-        cw_str = ", ".join(sorted(set(cw_list))) if cw_list else "-"
-        print(f"{i+1:3d} {score:4d} {word:<15} {d:<4} {tiles_str:<30} {cw_str}")
+        print(f"{i+1:3d} {score:4d} {word:<15} {d:<4} "
+              f"{tiles_str:<30} {record['cross']}")
 
     # Full-board ASCII diagrams
     if args.full_board:

@@ -11,23 +11,40 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 WORDS_REPO = "https://github.com/scrabblewords/scrabblewords.git"
-WORDS_DIR  = os.environ.get("CROSSPLAY_WORDS_DIR", "/home/claude/scrabblewords")
-NWL_PATH   = "words/North-American"
-UPLOAD_DIR  = "/mnt/user-data/uploads"
+WORDS_DIR = Path(os.environ.get(
+    "CROSSPLAY_WORDS_DIR",
+    Path.home() / ".cache" / "claude-crossplay" / "scrabblewords",
+))
+NWL_PATH = Path("words") / "North-American"
+UPLOAD_DIR = Path(os.environ.get(
+    "CROSSPLAY_UPLOAD_DIR",
+    "/mnt/user-data/uploads",
+))
 
 NWL_PLAYABILITY = "NWL2023-Playability.txt"
 NWL_FULL = "NWL2023.txt"
 
 
 def clone_if_needed(url, dest, label):
-    if os.path.exists(dest):
+    dest = Path(dest)
+    if (dest / ".git").exists():
         print(f"  {label}: already cloned at {dest}")
         return True
+    if dest.exists():
+        print(f"  {label}: FAILED - destination exists but is not a git checkout")
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  {label}: cloning {url} ...")
-    r = subprocess.run(["git", "clone", "--depth", "1", url, dest],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["git", "clone", "--depth", "1", url, str(dest)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if r.returncode == 0:
         print(f"  {label}: done")
         return True
@@ -37,18 +54,18 @@ def clone_if_needed(url, dest, label):
 
 def find_file(filename):
     candidates = [
-        os.path.join(WORDS_DIR, NWL_PATH, filename),
-        os.path.join(UPLOAD_DIR, filename),
+        Path(WORDS_DIR) / NWL_PATH / filename,
+        Path(UPLOAD_DIR) / filename,
     ]
     for p in candidates:
-        if os.path.exists(p):
+        if p.exists():
             return p
     return None
 
 
 def load_playability(path, max_len=15):
     words = []
-    with open(path) as f:
+    with Path(path).open("r", encoding="utf-8") as f:
         for line in f:
             parts = line.split(None, 1)
             if len(parts) == 2:
@@ -63,7 +80,7 @@ def load_playability(path, max_len=15):
 
 def load_full(path, max_len=15):
     words = []
-    with open(path) as f:
+    with Path(path).open("r", encoding="utf-8") as f:
         for line in f:
             w = line.split()[0].upper()
             if w.isalpha() and 2 <= len(w) <= max_len:
@@ -79,7 +96,8 @@ def main():
     args = p.parse_args()
 
     print("Fetching data...")
-    clone_if_needed(WORDS_REPO, WORDS_DIR, "NWL23 words")
+    if not clone_if_needed(WORDS_REPO, WORDS_DIR, "NWL23 words"):
+        sys.exit(1)
 
     words = set()
     source = None
@@ -104,7 +122,9 @@ def main():
         sys.exit(1)
 
     sorted_words = sorted(words)
-    with open(args.output, "w") as f:
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
         for w in sorted_words:
             f.write(w + "\n")
 

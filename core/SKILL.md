@@ -1,278 +1,218 @@
 ---
 name: crossplay-solver-core
-description: Solve NYT Crossplay board positions — find the highest-scoring legal moves given a board screenshot and a rack of tiles. Use this skill whenever the user mentions NYT Crossplay, Crossplay, or shares a screenshot of a Crossplay board and asks what to play, or references rack letters and wants move suggestions. Also use when the user asks dictionary questions like "words ending in Z" or "4 letter words with Q", or asks for hints/ideas on a Crossplay board. This skill handles board reconstruction from images, NWL23 dictionary setup, cross-word validation, premium square scoring, and visual HTML output of recommended plays.
+description: >-
+  Solve NYT Crossplay board positions and answer Crossplay or NWL23 rack and
+  word-list questions. Use whenever the user mentions NYT Crossplay or
+  Crossplay, provides a Crossplay board screenshot, asks for a best play or a
+  hint, or asks a word-game lookup involving rack letters or NWL23. Do not use
+  for multiplayer cross-platform compatibility, unrelated crosswords, or
+  Scrabble boards. Use for a general dictionary question only when the user
+  explicitly invokes this skill. Handles board reconstruction, legal move
+  generation, scoring, strategy notes, and visual results.
+compatibility: >-
+  Requires Python 3.8+, git, opencv-python, numpy, requests, filesystem access,
+  and a user-accessible location for HTML and PNG outputs. Dictionary setup
+  requires outbound HTTPS to github.com unless NWL23 source files are supplied.
 ---
 
-# NYT Crossplay Board Solver
+# NYT Crossplay Solver
 
-Finds the highest-scoring valid moves for an NYT Crossplay board, given the current board state and the player's tile rack.
+Find high-scoring legal moves from a board screenshot and rack, provide
+non-spoiling hints, or answer Crossplay word-list questions.
 
-## Overview
+## Resolve paths before running commands
 
-Four scripts:
+Identify these absolute paths once:
 
-1. **`scripts/setup_dict.py`** — clones NWL23 word lists from GitHub and builds a 145K-word tournament dictionary
-2. **`scripts/grid_overlay.py`** — draws numbered grid lines on a screenshot for Claude to read tile positions manually
-3. **`scripts/solver.py`** — solver engine: finds all legal moves, scores them
-4. **`scripts/moves_template.py`** — shared HTML template for visual move boards and board confirmation. Supports light/dark mode. Exports `generate_board_confirm_html()` and `generate_moves_html()`.
+- `<SKILL_DIR>`: this skill's installed `crossplay-solver-core` directory.
+- `<WORK_DIR>`: a writable directory for `board.json`, `moves.json`,
+  `dict.txt`, and dictionary caches.
+- `<OUTPUT_DIR>`: a user-accessible directory for HTML and PNG artifacts.
+- `<SCREENSHOT>`: the attached board screenshot.
 
-## Modes
+Run bundled scripts directly from `<SKILL_DIR>/scripts`. Do not copy them into
+the work directory; keeping imports together prevents mismatched script
+versions.
 
-This skill operates in three modes. Detect the mode from the user's prompt before starting:
+## Bundled resources
 
-### 1. Dictionary Mode
+- `scripts/setup_dict.py`: build the NWL23 dictionary.
+- `scripts/grid_overlay.py`: locate the board and draw a numbered overlay.
+- `scripts/solver.py`: validate board structure and generate scored moves.
+- `scripts/moves_template.py`: render board confirmation and move HTML.
+- `scripts/nwl23_ref.py`: curated strategic word lists and lookup helpers.
 
-**Trigger:** User invokes via `/` slash command and asks a dictionary lookup question — e.g. "is there a word that ends with Z", "4 letter words that begin with Q", "words with double L", "valid 2-letter words with X". No board solving is needed.
+Load references only when needed:
 
-**If a screenshot is attached:** Only examine the tile rack to extract available letters, then constrain the dictionary search to those letters.
+- Read `references/game-rules.md` before manual score checks or strategic
+  analysis.
+- Read `references/dictionary.md` in Dictionary mode or for high-value word,
+  hook, dump, and bingo guidance.
+- Read `references/diagnostics.md` only when the default solver or overlay
+  workflow fails or needs tuning.
 
-**Workflow:**
-1. Set up dictionary (Step 1 from main workflow, if not already done)
-2. Search `dict.txt` using grep/Python to answer the query (filter by length, pattern, available letters, etc.)
-3. Also cross-reference `nwl23_ref.py` lists (TWO_LETTER, SHORT_J/Q/X/Z, etc.) when relevant
-4. Respond with a text list of matching words — no board HTML, no overlay, no solver
+## Choose a mode
 
-### 2. Hint Mode
+### Dictionary mode
 
-**Trigger:** User says "give me a hint", "give me ideas", "any suggestions", "where should I look", or similar hint/idea language, and attaches a screenshot.
+Choose this for a Crossplay or NWL23 lookup that does not require solving a
+board, such as words ending in Z, four-letter Q words, or plays possible from
+a rack.
 
-**Workflow:**
-1. Run the full solver pipeline (Steps 1–5) internally
-2. **Do NOT output any HTML moves files.** Instead, respond with text-only subtle hints:
-   - Point toward promising areas of the board (e.g. "there's an opening near the bottom-right triple word")
-   - Mention strategic ideas (e.g. "your rack has good bingo potential", "look for hooks on existing short words")
-   - Hint at letter combinations without giving away the exact word (e.g. "your high-value tile could pair well with what's in row 8")
-   - Mention approximate point ranges ("there's a 30+ point play available")
-3. Board confirmation (Step 4) is still required before running the solver
-4. Output `board-{N}.html` and `overlay-{N}.png` as usual for board confirmation, but skip `moves-{N}.html`
+If a screenshot is attached, inspect only the rack and use its letters as an
+additional constraint. Set up `dict.txt`, read `references/dictionary.md`, and
+filter the dictionary or curated lists with Python. Return a concise text list;
+do not generate overlay, board, or move HTML.
 
-### 3. Full Solver Mode (default)
+### Hint mode
 
-**Trigger:** Screenshot provided with no hint language, or explicit "solve", "what should I play", "best move", etc. This is the default when neither Dictionary nor Hint mode applies.
+Choose this when the user asks for a hint, idea, direction, or area to explore
+and supplies a screenshot. Follow the board workflow through the solve, but
+return only subtle text hints:
 
-**Workflow:** Follow the full pipeline below (Steps 1–6).
+- Point to a promising board area or premium lane.
+- Describe a strategic pattern without revealing the exact word or cells.
+- Mention an approximate score range when useful.
 
----
+Generate the overlay and board-confirmation HTML, but not move HTML. The board
+still needs user confirmation because hints based on a misread tile are not
+useful.
 
-## Full Solver Workflow
+### Full solver mode
 
-### Step 1: Set up dictionary (once per session)
+Use this by default for a screenshot plus requests such as "solve", "best
+move", or "what should I play?" Follow the complete workflow and render the
+top moves.
 
-```bash
-cd /home/claude
-cp -r <SKILL_DIR>/scripts .
-python scripts/setup_dict.py --output dict.txt
-```
+## Board workflow
 
-Second run in same session is instant (repo cached). Use `--full` flag for the complete 196K word list.
+Use an incrementing round number `{N}` for every screenshot solved in the
+conversation. This prevents later artifacts from overwriting earlier ones.
 
+### 1. Set up the dictionary
 
-
-### Step 2: Read the board
-
-```bash
-python scripts/grid_overlay.py /mnt/user-data/uploads/<screenshot>.png -o /home/claude/overlay-{N}.png
-```
-
-View the overlay image and manually read each green-highlighted cell's letter using the numbered grid lines. Build board.json from what you see.
-
-### Step 3: Verify and fix the board
-
-**Score verification (REQUIRED):** Check the last-played word's score against what the screenshot reports. For example, if the screenshot says "Enoch played GAIN for 24 points", compute GAIN's score from the board placement. If it doesn't match, fix the board JSON.
-
-**Fix errors:** Replace any misreads in board.json by viewing the original screenshot.
-
-**Cross-word validation:** Run the solver in confirm-only mode. Nonsense cross-words indicate errors.
-
-### Step 4: Confirm the board with the user (REQUIRED)
-
-**Before solving**, generate an HTML board confirmation and present it to the user:
-
-```python
-import json, sys
-sys.path.insert(0, 'scripts')
-from moves_template import generate_board_confirm_html
-
-with open('board.json') as f:
-    board = json.load(f).get("tiles", json.load(open('board.json')))
-
-PREMIUM = {}  # ... (copy premium dict from solver constants)
-
-generate_board_confirm_html(
-    board=board, premium=PREMIUM,
-    output_path="/mnt/user-data/outputs/board-{N}.html",
-    title="Board Confirmation — vs Opponent",
-    subtitle="You: X · Opponent: Y · Last play: WORD for N pts"
-)
-```
-
-Present both the HTML file (`board-{N}.html`) and the grid overlay PNG (`overlay-{N}.png`) to the user and **wait for confirmation** before solving. This catches tile detection errors (false positives from premium squares, missed tiles, misread letters) before they waste a solve cycle.
-
-### Step 5: Run the solver
+Run once per conversation:
 
 ```bash
-python scripts/solver.py \
-    --board board.json \
-    --rack AILETEC \
-    --dict dict.txt \
-    --top 10 \
-    -q
+python "<SKILL_DIR>/scripts/setup_dict.py" --output "<WORK_DIR>/dict.txt"
 ```
 
-**Rack blank tiles**: pass each blank as `?` in `--rack` (e.g. `--rack RA?OFHW` for a rack with one blank). The solver expands `?` over A-Z and scores the placed tile as 0 pts.
+Use `--full` only when the user asks for the complete 196K list. The default
+playability list is smaller and better suited to normal move generation.
+`setup_dict.py` reuses its source checkout; `solver.py` similarly caches a trie
+beside `dict.txt`.
 
-**Engines:** `--engine trie` (default) uses a forward dictionary trie that prunes main-word prefixes at every step. On a 2-blank rack that took ~500s under the old naive B&B engine, the trie engine finishes in ~1s. `--engine gaddag` uses a bidirectional Gordon GADDAG with Appel-Jacobson leftmost-anchor discipline; it is correctness-equivalent to trie but runs roughly 2x slower in pure Python (the per-step constants in CPython outweigh the algorithmic advantage). `--engine naive` keeps the original cell-by-cell search with branch-and-bound; it remains as a correctness fallback and is what equivalence tests compare against.
+If dictionary setup fails, show the actual error and stop. Solving against a
+substitute word list would change move legality without the user's knowledge.
 
-**Flags:**
-- `--engine {trie,gaddag,naive}` - move-gen engine (default `trie`)
-- `--top N` - top N moves in summary table (default 10)
-- `--time-limit SECONDS` - cooperative wall-clock stop (default `0` = unlimited)
-- `--no-prune` - disable branch-and-bound (naive engine only; diagnostic / equivalence testing)
-- `-q` / `--quiet` - suppress board print, reduce output tokens (recommended when generating HTML visuals)
-- `--full-board` - full-board ASCII diagrams (only use for debugging, not needed with HTML output)
-- `--full-board-count N` - how many diagrams (default 3)
-- `--confirm-only` - just print board for confirmation, don't solve
+### 2. Overlay and transcribe the board
 
-**Trie cache:** first solve builds `<dict>.trie.pkl` next to `dict.txt` (~2MB, a few seconds). Subsequent runs load the cache in well under a second. The dictionary is treated as static; delete the .pkl if you ever regenerate the dictionary.
-
-### Step 6: Present results visually
-
-**Always show the top 3-5 moves as visual board diagrams** using the `moves_template.py` module. This generates themed HTML that works in both light and dark mode.
-
-```python
-from moves_template import generate_moves_html
-
-moves = [
-    {"word": "OXTER", "pts": 36, "dir": "across row 11",
-     "tiles": {"11,10": "O", "11,12": "T", "11,13": "E", "11,14": "R"},
-     "cross": "—",
-     "note": "R on 3W triples the word. Rack leave: [blank], I, I."},
-    # ... more moves
-]
-
-generate_moves_html(
-    title="Round N — description",
-    subtitle="You: X · Opponent: Y · Rack: ... · N tiles left",
-    board=BOARD_DICT, premium=PREMIUM_DICT, moves=moves,
-    output_path="/mnt/user-data/outputs/moves-{N}.html"
-)
+```bash
+python "<SKILL_DIR>/scripts/grid_overlay.py" "<SCREENSHOT>" --output "<OUTPUT_DIR>/overlay-{N}.png"
 ```
 
-**Round counter:** Replace `{N}` with an incrementing integer (1, 2, 3, …) for each solve in the conversation. This applies to all outputs: `board-{N}.html`, `overlay-{N}.png`, and `moves-{N}.html`. This preserves every output as a separate artifact so earlier results are not overwritten.
+Inspect both the original screenshot and numbered overlay. Transcribe every
+occupied cell into `<WORK_DIR>/board.json`:
 
-Each move diagram shows:
-- Existing tiles in blue, **new tiles in orange** with inset border
-- Premium squares with colors that adapt to light/dark mode
-- Word, score, cross-words, and strategic notes beneath each board
-
-**Strategic notes to include per move:**
-- Premium squares hit (e.g. "X on 2W")
-- Rack leave quality (vowel/consonant balance, dangerous letters kept)
-- Defensive considerations (opening triple lanes, blocking)
-
-## NYT Crossplay Tile Values
-
-| Pts | Letters |
-|-----|---------|
-| 1 | A, E, I, N, O, R, S, T |
-| 2 | D, L, U |
-| 3 | C, H, M, P |
-| 4 | B, F, G, Y |
-| 5 | W |
-| 6 | K, V |
-| 8 | X |
-| 10 | J, Q, Z |
-
-## NYT Crossplay Tile Distribution
-
-100 tiles total (including 3 blanks). Starting rack is 7 tiles per
-player.
-
-| Count | Letters |
-|-------|---------|
-| 12 | E |
-| 9 | A |
-| 8 | I, O |
-| 6 | R, T |
-| 5 | N, S |
-| 4 | D, L |
-| 3 | G, H, U, BLANK |
-| 2 | B, C, F, M, P, V, W, Y |
-| 1 | J, K, Q, X, Z |
-
-## NYT Crossplay Premium Layout (56 squares, fully symmetric)
-
-| Type | Positions |
-|------|-----------|
-| 3W (x8) | (0,3) (0,11) (3,0) (3,14) (11,0) (11,14) (14,3) (14,11) |
-| 2W (x8) | (1,1) (1,13) (3,7) (7,3) (7,11) (11,7) (13,1) (13,13) |
-| 3L (x20) | (0,0) (0,14) (1,6) (1,8) (4,5) (4,9) (5,4) (5,10) (6,1) (6,13) (8,1) (8,13) (9,4) (9,10) (10,5) (10,9) (13,6) (13,8) (14,0) (14,14) |
-| 2L (x20) | (0,7) (2,4) (2,10) (3,3) (3,11) (4,2) (4,12) (5,7) (7,0) (7,5) (7,9) (7,14) (9,7) (10,2) (10,12) (11,3) (11,11) (12,4) (12,10) (14,7) |
-
-## Scoring Rules
-
-- **Letter premiums (2L, 3L)**: multiply only the single letter on that square.
-- **Word premiums (2W, 3W)**: multiply the entire word. Multiple word premiums stack.
-- Premiums only apply to NEW tiles, not existing board tiles.
-- Cross-words get premiums from newly placed tiles too.
-- All 7 tiles in one play = **40-point bonus**.
-- Center (7,7) has **no premium**.
-
-## Endgame Rules
-
-- The game ends when the tile bag is empty and each player has had one more turn.
-- There is **no penalty** for remaining tiles at end of game. Do not factor rack-leave point deductions into endgame strategy.
-- Strategic implication: near endgame, focus purely on maximizing points scored rather than emptying your rack.
-
-## Grid Overlay Technical Details
-
-The `grid_overlay.py` script uses robust anchor detection that cross-validates across all four edges of the board:
-
-1. **Edge-based rough crop**: Canny edges → column projection → find board horizontal extent.
-2. **4-edge cluster detection**: Scans left/right/top/bottom strips (~1 cell wide) for premium-square saturation clusters (HSV S > 20).
-3. **Opposite-edge matching**: Pairs left-edge clusters with right-edge clusters by y-coordinate (and top with bottom by x-coordinate). Unmatched clusters are discarded — this filters out UI noise like the turquoise knife avatar on the left of the header, or the tile rack below the board. A real board row has premiums at col 0 AND col 14 (so a true anchor shows up on both edges at the same y).
-4. **Subset fitting to known premium pattern**: Crossplay has premiums on edges at rows/cols {0, 3, 7, 11, 14} exactly. The fit tries every N-subset of matched anchors, fits a linear model `center_i = origin + pos_i * cell_size` against the known pattern, and picks the fit with minimum max-pixel residual. If extra noise clusters slip past edge matching (e.g. the tile rack produces blue saturation on both left AND right edges), the subset search still finds the real 5 by residual minimization.
-5. **Cross-axis validation**: Computes `cell_y` from rows and `cell_x` from cols independently. If they disagree by >5%, trusts whichever axis has the lower fit residual.
-
-Typical good fit: residual < 3px, cell_x ≈ cell_y to within 1%. Run with `--debug` to see all diagnostic info.
-
-The script also adds left padding to the output image when the board is near the left edge, ensuring row labels are always visible.
-
-Blue tile detection uses HSV filtering tuned for Crossplay's tile color:
-- H: 85-130, S: >=55, V: >=80
-- Cell classified as tile if >42% of pixels match
-- This cleanly separates tiles (ratio 0.42-0.90) from premium squares (ratio 0.30-0.39)
-
-## Troubleshooting
-
-- **Score mismatch**: Verify board column alignment first. Check for blank tiles. Verify tile values match the game.
-- **No moves found**: Check board reconstruction. Verify existing words are in dict.txt.
-- **Grid overlay misaligned**: Run with `--debug` to inspect cluster detection. Check: (a) `matched_ys` and `matched_xs` should each have ~5 entries near the premium pattern, (b) `resid_y` and `resid_x` should be <3px, (c) `axis_disagreement` should be <1%. If residuals are high, the subset fitting can't find a clean pattern — the board may be partially occluded or UI chrome is contaminating the edge strips. If `cell_x` differs from `cell_y` by >5%, the code auto-picks the lower-residual axis. You can also tune HSV thresholds in `find_clusters()`.
-- **False positive tiles**: If premium squares are detected as tiles, increase the ratio threshold above 0.42. If tiles are missed, decrease it.
-
-## NWL23 Reference (scripts/nwl23_ref.py)
-
-Contains extracted word lists from the official NWL23 Cheat Sheet. Import and use for:
-
-```python
-from nwl23_ref import (
-    TWO_LETTER,           # Set of 107 valid 2-letter words
-    SHORT_J, SHORT_Q,     # Short high-value words (2-4 letters)
-    SHORT_X, SHORT_Z,
-    BINGO_STEMS,          # TISANE/SATIRE/RETINA letter sets
-    HI_PROB_7,            # 156 high-probability 7-letter bingos
-    VOWEL_DUMPS,          # Words to dump excess vowels
-    I_DUMPS, U_DUMPS,     # Duplicate-letter dumps
-    is_valid_2letter,     # Quick 2-letter validation
-    validate_crosswords,  # Check cross-word list
-    check_bingo_potential,# Check rack for bingo stems
-    get_premium_words,    # Short J/Q/X/Z words for premium targeting
-    find_dump_words,      # Find dump plays from rack
-)
+```json
+{
+  "tiles": {
+    "7,7": "A",
+    "7,8": "R",
+    "8,8": "k"
+  }
+}
 ```
 
-**Integration with solver output:**
-- After running the solver, validate all 2-letter cross-words against `TWO_LETTER`
-- Flag any cross-word not in the set as INVALID — the play will be rejected
-- Check rack for bingo potential before solving — if TISANE/SATIRE/RETINA overlap ≥5, prioritize 7-tile plays
-- When holding J/Q/X/Z, cross-reference `SHORT_X` etc. for premium-square targeting ideas
+Coordinates are zero-based `row,column`. Use lowercase only for a board tile
+that was played as a blank; lowercase tells the solver that tile scores zero.
+
+### 3. Check the reconstruction
+
+Read `references/game-rules.md` and independently compute the most recently
+reported play when the screenshot identifies its placement and score. A score
+mismatch is strong evidence of a shifted column, missed tile, misread letter,
+or blank.
+
+Also inspect the solver's full-board rendering:
+
+```bash
+python "<SKILL_DIR>/scripts/solver.py" --board "<WORK_DIR>/board.json" --confirm-only
+```
+
+This command renders the transcription but does not perform dictionary
+validation. Visually inspect contiguous letter sequences and correct obvious
+nonsense against the screenshot.
+
+### 4. Confirm the board with the user
+
+Render a confirmation page through the bundled CLI:
+
+```bash
+python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.json" --output "<OUTPUT_DIR>/board-{N}.html" --title "Board confirmation" --subtitle "Round {N}"
+```
+
+Present `board-{N}.html` and `overlay-{N}.png`, then wait for explicit
+confirmation or corrections. This checkpoint is intentionally before the
+solve because a single bad tile can invalidate every recommendation. Apply
+corrections to `board.json` and regenerate the page before continuing.
+
+### 5. Run the solver
+
+```bash
+python "<SKILL_DIR>/scripts/solver.py" --board "<WORK_DIR>/board.json" --rack "AILETEC" --dict "<WORK_DIR>/dict.txt" --top 5 --json-output "<WORK_DIR>/moves.json" --quiet
+```
+
+Represent each rack blank as `?`, for example `RA?OFHW`. The default trie
+engine is the normal choice. Read `references/diagnostics.md` before selecting
+another engine, disabling pruning, or changing time limits.
+
+### 6. Present the result
+
+In Hint mode, use the solver output internally and return only the subtle text
+hints described above.
+
+In Full Solver mode, `solver.py` writes the best five results directly to
+`<WORK_DIR>/moves.json`. This preserves exact coordinates, blank-tile casing,
+cross words, premiums, and rack leave without retyping the console table. The
+file has this shape:
+
+```json
+{
+  "moves": [
+    {
+      "word": "OXTER",
+      "pts": 36,
+      "dir": "across, row 11",
+      "tiles": {
+        "11,10": "O",
+        "11,12": "T",
+        "11,13": "E",
+        "11,14": "R"
+      },
+      "cross": "-",
+      "note": "R reaches 3W; balanced rack leave."
+    }
+  ]
+}
+```
+
+Keep the best three to five entries. The solver supplies a factual note about
+premiums and rack leave; expand it with any meaningful defensive tradeoff, but
+do not rewrite coordinates or lowercase blank letters by hand.
+
+Render the recommendations:
+
+```bash
+python "<SKILL_DIR>/scripts/moves_template.py" moves --board "<WORK_DIR>/board.json" --moves "<WORK_DIR>/moves.json" --output "<OUTPUT_DIR>/moves-{N}.html" --title "Crossplay recommendations" --subtitle "Round {N}"
+```
+
+Present `moves-{N}.html` with a concise text summary of the best move and any
+important caveat.
+
+## Report a problem
+
+For a report to https://github.com/g-zhang/claude-crossplay/issues, include the
+final non-empty `_Built from ..._` footer from this file when present, the
+prompt and screenshot, exact error or incorrect result, and expected behavior.
+If the footer is absent, identify the skill as a local or development install.

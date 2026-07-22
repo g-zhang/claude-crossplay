@@ -3,7 +3,18 @@ Shared HTML template for visual move boards.
 Supports light and dark mode via prefers-color-scheme.
 """
 
-from solver import TILE_PTS
+import argparse
+import json
+from html import escape
+from pathlib import Path
+
+from solver import PREMIUM, PREMIUM_DISPLAY, TILE_PTS
+
+
+DEFAULT_PREMIUM = {
+    position: PREMIUM_DISPLAY[premium_type]
+    for position, premium_type in PREMIUM.items()
+}
 
 CSS = """<style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -123,13 +134,13 @@ def cell_html(r, c, board, new_tiles, premium):
         is_blank = raw.islower()
         pts = 0 if is_blank else TILE_PTS.get(letter, 0)
         cls = "cell new blank" if is_blank else "cell new"
-        return f'<div class="{cls}">{letter}<span class="pts">{pts}</span></div>'
+        return f'<div class="{cls}">{escape(letter)}<span class="pts">{pts}</span></div>'
     elif key in board:
         letter = board[key].upper()
         is_blank = board[key].islower()
         pts = 0 if is_blank else TILE_PTS.get(letter, 0)
         cls = "cell tile blank" if is_blank else "cell tile"
-        return f'<div class="{cls}">{letter}<span class="pts">{pts}</span></div>'
+        return f'<div class="{cls}">{escape(letter)}<span class="pts">{pts}</span></div>'
     else:
         prem = premium.get((r, c))
         if r == 7 and c == 7:
@@ -150,26 +161,37 @@ def _norm_str_keys(d):
             out[k] = v
     return out
 
-def _norm_tuple_keys(d):
-    """Normalize dict keys to (r,c) tuples. Accepts both (r,c) tuples and 'r,c' strings."""
+def _norm_premium(d):
+    """Normalize premium keys and accept solver or display premium codes."""
     out = {}
     for k, v in d.items():
         if isinstance(k, str):
             r, c = k.split(",")
-            out[(int(r), int(c))] = v
+            key = (int(r), int(c))
         else:
-            out[k] = v
+            key = k
+        label = PREMIUM_DISPLAY.get(v, v)
+        if label not in PREM_COLORS_LIGHT:
+            raise ValueError(f"Unsupported premium type: {v}")
+        out[key] = label
     return out
+
+
+def _write_html(parts, output_path, message):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(parts), encoding="utf-8")
+    print(f"{message}: {output_path}")
 
 
 def generate_board_confirm_html(board, premium, output_path, title="Board Confirmation", subtitle=""):
     """Generate an HTML page showing just the board for user confirmation (no moves)."""
     board = _norm_str_keys(board)
-    premium = _norm_tuple_keys(premium)
+    premium = _norm_premium(premium)
     parts = [CSS, DARK_MODE_SCRIPT]
-    parts.append(f'<h1>{title}</h1>')
+    parts.append(f'<h1>{escape(str(title))}</h1>')
     if subtitle:
-        parts.append(f'<div class="subtitle">{subtitle}</div>')
+        parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
     parts.append('<div class="board"><div class="cell hdr"></div>')
     for c in range(15):
         parts.append(f'<div class="cell hdr">{c}</div>')
@@ -185,21 +207,18 @@ def generate_board_confirm_html(board, premium, output_path, title="Board Confir
   <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>
   <div class="leg"><span class="leg-box" style="background:#EAF3DE;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#3B6D11">2L</span> Double Letter</div>
 </div>""")
-    html = "\n".join(parts)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"Board confirmation written to {output_path}")
+    _write_html(parts, output_path, "Board confirmation written to")
 
 
 def generate_moves_html(title, subtitle, board, premium, moves, output_path):
     """Generate full HTML page with move boards."""
     board = _norm_str_keys(board)
-    premium = _norm_tuple_keys(premium)
+    premium = _norm_premium(premium)
 
     parts = [CSS, DARK_MODE_SCRIPT]
 
-    parts.append(f'<h1>{title}</h1>')
-    parts.append(f'<div class="subtitle">{subtitle}</div>')
+    parts.append(f'<h1>{escape(str(title))}</h1>')
+    parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Existing</div>
   <div class="leg"><span class="leg-box" style="background:var(--new-tile);box-shadow:inset 0 0 0 2px var(--new-border)"></span> Play here</div>
@@ -211,7 +230,12 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
 
     for i, move in enumerate(moves):
         parts.append('<div class="move-section">')
-        parts.append(f'<div class="move-header">#{i+1}: <strong>{move["word"]}</strong> -- {move["pts"]} pts ({move["dir"]})</div>')
+        word = escape(str(move["word"]))
+        points = escape(str(move["pts"]))
+        direction = escape(str(move["dir"]))
+        cross_words = escape(str(move["cross"]))
+        note = escape(str(move["note"]))
+        parts.append(f'<div class="move-header">#{i+1}: <strong>{word}</strong> -- {points} pts ({direction})</div>')
         parts.append('<div class="board"><div class="cell hdr"></div>')
         for c in range(15):
             parts.append(f'<div class="cell hdr">{c}</div>')
@@ -220,11 +244,88 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
             for c in range(15):
                 parts.append(cell_html(r, c, board, move["tiles"], premium))
         parts.append('</div>')
-        parts.append(f'<div class="move-info">Cross-words: {move["cross"]}</div>')
-        parts.append(f'<div class="move-note">{move["note"]}</div>')
+        parts.append(f'<div class="move-info">Cross-words: {cross_words}</div>')
+        parts.append(f'<div class="move-note">{note}</div>')
         parts.append('</div>')
 
-    html = "\n".join(parts)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"Written {len(moves)} moves to {output_path}")
+    _write_html(parts, output_path, f"Written {len(moves)} moves to")
+
+
+def _read_json(path):
+    with Path(path).open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_board(path):
+    data = _read_json(path)
+    board = data.get("tiles", data) if isinstance(data, dict) else None
+    if not isinstance(board, dict):
+        raise ValueError("Board JSON must be an object or contain a 'tiles' object")
+    return board
+
+
+def _load_moves(path):
+    data = _read_json(path)
+    moves = data.get("moves") if isinstance(data, dict) else data
+    if not isinstance(moves, list):
+        raise ValueError("Moves JSON must be an array or contain a 'moves' array")
+    required = {"word", "pts", "dir", "tiles", "cross", "note"}
+    for index, move in enumerate(moves, start=1):
+        if not isinstance(move, dict):
+            raise ValueError(f"Move {index} must be an object")
+        missing = required - set(move)
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"Move {index} is missing: {names}")
+        if not isinstance(move["tiles"], dict):
+            raise ValueError(f"Move {index} 'tiles' must be an object")
+    return moves
+
+
+def _add_common_arguments(parser, default_title):
+    parser.add_argument("--board", required=True, help="Path to board JSON")
+    parser.add_argument("--output", required=True, help="Output HTML path")
+    parser.add_argument("--title", default=default_title)
+    parser.add_argument("--subtitle", default="")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Render Crossplay board HTML")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    board_parser = subparsers.add_parser(
+        "board", help="Render a board-confirmation page"
+    )
+    _add_common_arguments(board_parser, "Board Confirmation")
+
+    moves_parser = subparsers.add_parser(
+        "moves", help="Render move recommendations"
+    )
+    _add_common_arguments(moves_parser, "Crossplay Moves")
+    moves_parser.add_argument("--moves", required=True, help="Path to moves JSON")
+
+    args = parser.parse_args(argv)
+    board = _load_board(args.board)
+    if args.command == "board":
+        generate_board_confirm_html(
+            board,
+            DEFAULT_PREMIUM,
+            args.output,
+            title=args.title,
+            subtitle=args.subtitle,
+        )
+        return
+
+    moves = _load_moves(args.moves)
+    generate_moves_html(
+        args.title,
+        args.subtitle,
+        board,
+        DEFAULT_PREMIUM,
+        moves,
+        args.output,
+    )
+
+
+if __name__ == "__main__":
+    main()

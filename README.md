@@ -21,8 +21,12 @@ Given a screenshot of a Crossplay board and your current tile rack, this skill:
 | [`setup_dict.py`](core/scripts/setup_dict.py) | Clones NWL23 word lists and builds `dict.txt` |
 | [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid on a board screenshot for manual tile reading |
 | [`solver.py`](core/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
-| [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board visualizations (light/dark mode) |
+| [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board confirmations and move visualizations through a reusable CLI |
 | [`nwl23_ref.py`](core/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
+
+Detailed game rules, dictionary guidance, and troubleshooting live under
+[`core/references/`](core/references/) so the main skill loads them only when
+needed.
 
 ## Installation
 
@@ -125,6 +129,7 @@ crossplay-solver.skill
 crossplay-solver-core.skill
 └── crossplay-solver-core/
     ├── SKILL.md
+    ├── references/
     └── scripts/
 ```
 
