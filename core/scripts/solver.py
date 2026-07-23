@@ -74,13 +74,78 @@ LETTER_BIT = {chr(ord('A') + i): 1 << i for i in range(26)}
 
 def load_dictionary(dict_path):
     """Load dictionary and build prefix set."""
+    words = set()
     with open(dict_path, encoding="utf-8") as f:
-        words = set(line.strip().upper() for line in f if line.strip())
+        for line_number, line in enumerate(f, start=1):
+            raw_word = line.strip()
+            if not raw_word:
+                continue
+            if not raw_word.isascii() or not raw_word.isalpha():
+                raise ValueError(
+                    f"Dictionary line {line_number} is not an A-Z word: "
+                    f"{raw_word!r}"
+                )
+            if not 2 <= len(raw_word) <= 15:
+                raise ValueError(
+                    f"Dictionary line {line_number} must contain 2 to 15 letters"
+                )
+            words.add(raw_word.upper())
+    if not words:
+        raise ValueError("Dictionary contains no words")
     prefixes = set()
     for w in words:
         for i in range(1, len(w)+1):
             prefixes.add(w[:i])
     return words, prefixes
+
+
+def normalize_board_tiles(data):
+    """Validate board JSON data and return canonical coordinate keys."""
+    if not isinstance(data, dict):
+        raise ValueError("Board JSON must be an object")
+    tiles = data.get("tiles", data)
+    if not isinstance(tiles, dict):
+        raise ValueError("Board JSON 'tiles' must be an object")
+
+    normalized = {}
+    blank_count = 0
+    for key, letter in tiles.items():
+        if not isinstance(key, str):
+            raise ValueError("Board coordinate keys must be 'row,col' strings")
+        parts = key.split(",")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid board coordinate {key!r}; expected 'row,col'")
+        try:
+            row, col = (int(part.strip()) for part in parts)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid board coordinate {key!r}; row and column must be integers"
+            ) from exc
+        if not 0 <= row < 15 or not 0 <= col < 15:
+            raise ValueError(
+                f"Board coordinate {key!r} is outside the 15x15 board"
+            )
+        if (
+                not isinstance(letter, str)
+                or len(letter) != 1
+                or not letter.isascii()
+                or not letter.isalpha()):
+            raise ValueError(
+                f"Tile at ({row},{col}) must be one ASCII letter"
+            )
+
+        canonical_key = f"{row},{col}"
+        if canonical_key in normalized:
+            raise ValueError(
+                f"Duplicate board coordinate after normalization: {canonical_key}"
+            )
+        normalized[canonical_key] = letter
+        if letter.islower():
+            blank_count += 1
+
+    if blank_count > 3:
+        raise ValueError("Crossplay boards cannot contain more than three blanks")
+    return normalized
 
 
 def load_board_json(path):
@@ -89,9 +154,8 @@ def load_board_json(path):
     blanks = set()
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    for key, letter in data.get("tiles", data).items():
-        parts = key.split(',')
-        r, c = int(parts[0].strip()), int(parts[1].strip())
+    for key, letter in normalize_board_tiles(data).items():
+        r, c = (int(part) for part in key.split(","))
         if letter.islower():
             blanks.add((r, c))
         board[r][c] = letter.upper()
@@ -103,14 +167,43 @@ def load_board_text(path):
     board = [['.']*15 for _ in range(15)]
     blanks = set()
     with open(path, encoding="utf-8") as f:
-        lines = [l.rstrip('\n') for l in f.readlines()]
-    for r, line in enumerate(lines[:15]):
-        for c, ch in enumerate(line[:15]):
-            if ch != '.' and ch.isalpha():
-                if ch.islower():
-                    blanks.add((r, c))
-                board[r][c] = ch.upper()
+        lines = f.read().splitlines()
+    if len(lines) != 15:
+        raise ValueError(
+            f"Board text must contain exactly 15 lines; found {len(lines)}"
+        )
+    for r, line in enumerate(lines):
+        if len(line) != 15:
+            raise ValueError(
+                f"Board text row {r} must contain exactly 15 characters"
+            )
+        for c, ch in enumerate(line):
+            if ch == '.':
+                continue
+            if not ch.isascii() or not ch.isalpha():
+                raise ValueError(
+                    f"Board text tile at ({r},{c}) must be '.' or an ASCII letter"
+                )
+            if ch.islower():
+                blanks.add((r, c))
+            board[r][c] = ch.upper()
+    if len(blanks) > 3:
+        raise ValueError("Crossplay boards cannot contain more than three blanks")
     return board, blanks
+
+
+def validate_rack(rack):
+    """Return an uppercase rack after validating Crossplay tile syntax."""
+    if not isinstance(rack, str) or not 1 <= len(rack) <= 7:
+        raise ValueError("Rack must contain between one and seven tiles")
+    if any(
+            ch != '?' and (not ch.isascii() or not ch.isalpha())
+            for ch in rack):
+        raise ValueError("Rack may contain only A-Z letters and '?' blanks")
+    normalized = rack.upper()
+    if normalized.count('?') > 3:
+        raise ValueError("A Crossplay rack cannot contain more than three blanks")
+    return list(normalized)
 
 
 def print_board(board, new_tiles=None, file=sys.stdout):
@@ -1191,8 +1284,9 @@ def write_moves_json(path, moves):
 # ============================================================
 def main():
     parser = argparse.ArgumentParser(description='Word Game Board Solver')
-    parser.add_argument('--board', help='Path to board JSON file')
-    parser.add_argument('--board-text', help='Path to board text file')
+    board_source = parser.add_mutually_exclusive_group(required=True)
+    board_source.add_argument('--board', help='Path to board JSON file')
+    board_source.add_argument('--board-text', help='Path to board text file')
     parser.add_argument('--rack', help="Rack letters; use '?' for each blank tile")
     parser.add_argument('--dict', help='Path to dictionary file')
     parser.add_argument('--top', type=int, default=10, help='Top N moves')
@@ -1225,19 +1319,27 @@ def main():
     parser.add_argument('--ascii', action='store_true', help='(legacy) same as --full-board')
     parser.add_argument('--ascii-count', type=int, default=5, help='(legacy) same as --full-board-count')
     args = parser.parse_args()
+    if args.top < 1:
+        parser.error("--top must be at least 1")
+    if args.time_limit < 0:
+        parser.error("--time-limit must be non-negative")
+    if args.ascii_count < 0:
+        parser.error("--ascii-count must be non-negative")
 
     # Handle legacy flags
     if args.ascii and not args.full_board:
         args.full_board = True
         args.full_board_count = args.ascii_count
+    if args.full_board_count < 0:
+        parser.error("--full-board-count must be non-negative")
 
-    if args.board:
-        board, blanks = load_board_json(args.board)
-    elif args.board_text:
-        board, blanks = load_board_text(args.board_text)
-    else:
-        print("ERROR: Provide --board (JSON) or --board-text (text file)", file=sys.stderr)
-        sys.exit(1)
+    try:
+        if args.board:
+            board, blanks = load_board_json(args.board)
+        else:
+            board, blanks = load_board_text(args.board_text)
+    except (OSError, ValueError) as exc:
+        parser.error(f"could not load board: {exc}")
 
     # Confirm-only mode: just print the board and exit
     if args.confirm_only:
@@ -1250,37 +1352,33 @@ def main():
     if not args.rack or not args.dict:
         parser.error("--rack and --dict are required unless --confirm-only is used")
 
-    rack = list(args.rack.upper())
+    try:
+        rack = validate_rack(args.rack)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if len(blanks) + rack.count('?') > 3:
+        parser.error("The board and rack cannot contain more than three blanks total")
     print(f"Rack: {' '.join(rack)}")
 
     print("Loading dictionary...")
-    valid_words, prefixes = load_dictionary(args.dict)
+    try:
+        valid_words, prefixes = load_dictionary(args.dict)
+    except (OSError, ValueError) as exc:
+        parser.error(f"could not load dictionary: {exc}")
     print(f"Dictionary: {len(valid_words)} words")
 
     trie_root = None
     gaddag_root = None
     if args.engine == 'trie':
-        cache_path = Path(args.dict).with_suffix('.trie.pkl')
         t_trie = time.time()
-        if cache_path.exists():
-            trie_root = wordtrie.load_trie(cache_path)
-            print(f"Loaded trie cache: {cache_path.name} ({time.time()-t_trie:.1f}s)")
-        else:
-            print(f"Building trie cache: {cache_path.name} ...")
-            trie_root = wordtrie.build_trie(valid_words)
-            wordtrie.save_trie(trie_root, cache_path)
-            print(f"Built + saved trie in {time.time()-t_trie:.1f}s")
+        print("Building dictionary trie ...")
+        trie_root = wordtrie.build_trie(valid_words)
+        print(f"Built trie in {time.time()-t_trie:.1f}s")
     elif args.engine == 'gaddag':
-        cache_path = Path(args.dict).with_suffix('.gaddag.pkl')
         t_g = time.time()
-        if cache_path.exists():
-            gaddag_root = gaddag_mod.load_gaddag(cache_path)
-            print(f"Loaded gaddag cache: {cache_path.name} ({time.time()-t_g:.1f}s)")
-        else:
-            print(f"Building gaddag cache: {cache_path.name} ...")
-            gaddag_root = gaddag_mod.build_gaddag(valid_words)
-            gaddag_mod.save_gaddag(gaddag_root, cache_path)
-            print(f"Built + saved gaddag in {time.time()-t_g:.1f}s")
+        print("Building dictionary GADDAG ...")
+        gaddag_root = gaddag_mod.build_gaddag(valid_words)
+        print(f"Built GADDAG in {time.time()-t_g:.1f}s")
 
     if not args.quiet:
         print("\nCurrent board:")

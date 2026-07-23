@@ -5,14 +5,14 @@ description: >-
   word-list questions. Use whenever the user mentions NYT Crossplay or
   Crossplay, provides a Crossplay board screenshot, asks for a best play or a
   hint, or asks a word-game lookup involving rack letters or NWL23. Do not use
-  for multiplayer cross-platform compatibility, unrelated crosswords, or
-  Scrabble boards. Use for a general dictionary question only when the user
-  explicitly invokes this skill. This bootstrap fetches the current solver
-  workflow and scripts from GitHub before use.
+  for multiplayer cross-platform compatibility, products merely named
+  CrossPlay, unrelated crosswords, or Scrabble boards. Use for a general
+  dictionary question only when the user explicitly asks to use a Crossplay
+  solver skill. This bootstrap fetches the current solver workflow and scripts
+  from GitHub before use.
 compatibility: >-
-  Requires git, a POSIX shell, outbound HTTPS access to github.com, and a
-  writable temporary directory. The fetched core requires Python 3.8+,
-  opencv-python, numpy, and requests.
+  Requires Python 3.8+, git, outbound HTTPS access to github.com, and a writable
+  temporary directory. The fetched core also requires opencv-python and numpy.
 ---
 
 # NYT Crossplay Solver Bootstrap
@@ -23,27 +23,20 @@ presentation reach users without reinstalling the skill.
 
 ## 1. Fetch the current core once per conversation
 
-Use a dedicated temporary checkout. Pulling an existing checkout matters
-because reusing it without a refresh can silently run stale solver
-instructions.
+Identify `<SKILL_DIR>` as this installed `crossplay-solver` directory. Run the
+bundled fetcher once:
 
-```bash
-SRC="${TMPDIR:-/tmp}/claude-crossplay-src"
-if [ -d "$SRC/.git" ]; then
-  git -C "$SRC" pull --ff-only
-else
-  git clone --depth 1 --filter=blob:none --sparse \
-    https://github.com/g-zhang/claude-crossplay "$SRC"
-  git -C "$SRC" sparse-checkout set core
-fi
+```text
+python "<SKILL_DIR>/scripts/fetch_core.py"
 ```
 
-Check every command's exit status. If cloning or refreshing fails, stop and
-show the error instead of running a partial or stale checkout.
+The command prints a fresh temporary checkout path. If it fails, stop and show
+the reported error instead of running a partial checkout. Do not run the
+fetcher again during the same conversation.
 
 ## 2. Follow the core skill
 
-Remember the resolved `$SRC` path as `<SOURCE_DIR>`. Read
+Remember the printed path as `<SOURCE_DIR>`. Read
 `<SOURCE_DIR>/core/SKILL.md` and follow it for the rest of the task. Substitute
 `<SOURCE_DIR>/core` for every `<SKILL_DIR>` reference in that file.
 
@@ -62,7 +55,7 @@ Collect:
    development.
 2. **Fetched core version:** Run:
 
-   ```bash
+   ```text
    git -C "<SOURCE_DIR>" rev-parse HEAD
    git -C "<SOURCE_DIR>" log -1 --format=%cI
    ```

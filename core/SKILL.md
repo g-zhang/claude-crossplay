@@ -5,12 +5,13 @@ description: >-
   word-list questions. Use whenever the user mentions NYT Crossplay or
   Crossplay, provides a Crossplay board screenshot, asks for a best play or a
   hint, or asks a word-game lookup involving rack letters or NWL23. Do not use
-  for multiplayer cross-platform compatibility, unrelated crosswords, or
-  Scrabble boards. Use for a general dictionary question only when the user
-  explicitly invokes this skill. Handles board reconstruction, legal move
-  generation, scoring, strategy notes, and visual results.
+  for multiplayer cross-platform compatibility, products merely named
+  CrossPlay, unrelated crosswords, or Scrabble boards. Use for a general
+  dictionary question only when the user explicitly asks to use a Crossplay
+  solver skill. Handles board reconstruction, legal move generation, scoring,
+  strategy notes, and visual results.
 compatibility: >-
-  Requires Python 3.8+, git, opencv-python, numpy, requests, filesystem access,
+  Requires Python 3.8+, git, opencv-python, numpy, filesystem access,
   and a user-accessible location for HTML and PNG outputs. Dictionary setup
   requires outbound HTTPS to github.com unless NWL23 source files are supplied.
 ---
@@ -25,8 +26,8 @@ non-spoiling hints, or answer Crossplay word-list questions.
 Identify these absolute paths once:
 
 - `<SKILL_DIR>`: this skill's installed `crossplay-solver-core` directory.
-- `<WORK_DIR>`: a writable directory for `board.json`, `moves.json`,
-  `dict.txt`, and dictionary caches.
+- `<WORK_DIR>`: a writable directory for `board.json`, `moves.json`, and
+  `dict.txt`.
 - `<OUTPUT_DIR>`: a user-accessible directory for HTML and PNG artifacts.
 - `<SCREENSHOT>`: the attached board screenshot.
 
@@ -102,8 +103,11 @@ python "<SKILL_DIR>/scripts/setup_dict.py" --output "<WORK_DIR>/dict.txt"
 
 Use `--full` only when the user asks for the complete 196K list. The default
 playability list is smaller and better suited to normal move generation.
-`setup_dict.py` reuses its source checkout; `solver.py` similarly caches a trie
-beside `dict.txt`.
+`setup_dict.py` fetches a pinned NWL23 source revision and reuses that exact
+checkout. Set `CROSSPLAY_WORDS_DIR` when a compatible checkout, extracted
+source tree, or flat directory containing the NWL23 text files is already
+available. The solver builds its search index in memory so it never executes
+or trusts serialized cache files from the work directory.
 
 If dictionary setup fails, show the actual error and stop. Solving against a
 substitute word list would change move legality without the user's knowledge.

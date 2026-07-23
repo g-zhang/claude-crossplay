@@ -8,7 +8,12 @@ import json
 from html import escape
 from pathlib import Path
 
-from solver import PREMIUM, PREMIUM_DISPLAY, TILE_PTS
+from solver import (
+    PREMIUM,
+    PREMIUM_DISPLAY,
+    TILE_PTS,
+    normalize_board_tiles,
+)
 
 
 DEFAULT_PREMIUM = {
@@ -301,10 +306,7 @@ def _read_json(path):
 
 def _load_board(path):
     data = _read_json(path)
-    board = data.get("tiles", data) if isinstance(data, dict) else None
-    if not isinstance(board, dict):
-        raise ValueError("Board JSON must be an object or contain a 'tiles' object")
-    return board
+    return normalize_board_tiles(data)
 
 
 def _load_moves(path):
@@ -320,8 +322,22 @@ def _load_moves(path):
         if missing:
             names = ", ".join(sorted(missing))
             raise ValueError(f"Move {index} is missing: {names}")
-        if not isinstance(move["tiles"], dict):
-            raise ValueError(f"Move {index} 'tiles' must be an object")
+        if (
+                not isinstance(move["word"], str)
+                or not move["word"]
+                or not move["word"].isascii()
+                or not move["word"].isalpha()
+                or not move["word"].isupper()):
+            raise ValueError(f"Move {index} 'word' must contain A-Z letters")
+        if type(move["pts"]) is not int or move["pts"] < 0:
+            raise ValueError(f"Move {index} 'pts' must be a non-negative integer")
+        for field in ("dir", "cross", "note"):
+            if not isinstance(move[field], str):
+                raise ValueError(f"Move {index} '{field}' must be a string")
+        try:
+            move["tiles"] = normalize_board_tiles(move["tiles"])
+        except ValueError as exc:
+            raise ValueError(f"Move {index} has invalid tiles: {exc}") from exc
     return moves
 
 
@@ -348,7 +364,10 @@ def main(argv=None):
     moves_parser.add_argument("--moves", required=True, help="Path to moves JSON")
 
     args = parser.parse_args(argv)
-    board = _load_board(args.board)
+    try:
+        board = _load_board(args.board)
+    except (OSError, ValueError) as exc:
+        parser.error(f"could not load board: {exc}")
     if args.command == "board":
         generate_board_confirm_html(
             board,
@@ -359,7 +378,10 @@ def main(argv=None):
         )
         return
 
-    moves = _load_moves(args.moves)
+    try:
+        moves = _load_moves(args.moves)
+    except (OSError, ValueError) as exc:
+        parser.error(f"could not load moves: {exc}")
     generate_moves_html(
         args.title,
         args.subtitle,

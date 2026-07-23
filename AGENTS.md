@@ -47,5 +47,5 @@ Quick check before committing:
 python -c "import sys,re;
 [print(f) for f in sys.argv[1:]
  if re.search(r'[^\x00-\x7f]', open(f,encoding='utf-8').read())]" \
-  $(git diff --cached --name-only --diff-filter=AM | grep -E '\.(py|ps1|sh|js|ts|toml|yaml|yml|json)$')
+  $(git diff --cached --name-only --diff-filter=AM | grep -E '\.(py|rb|ps1|sh|js|ts|toml|yaml|yml|json)$')
 ```

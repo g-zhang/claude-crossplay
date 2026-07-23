@@ -7,6 +7,11 @@ high-value words, vowel dumps, or bingo potential.
 list used by the solver. `scripts/nwl23_ref.py` contains smaller curated sets
 and helpers for fast strategic lookups:
 
+Dictionary setup fetches a pinned revision of the public `scrabblewords`
+repository. Set `CROSSPLAY_WORDS_DIR` to a compatible git checkout, an
+extracted source tree, or a flat directory containing the NWL23 text files to
+reuse supplied files without a fresh download.
+
 ```python
 from nwl23_ref import (
     TWO_LETTER,

@@ -4,7 +4,6 @@ Crossplay grid overlay tool.
 Detects the board region, highlights tile cells, and builds a tile audit sheet.
 """
 
-import sys
 from pathlib import Path
 
 import cv2
@@ -580,7 +579,10 @@ def write_image(path, image):
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     extension = output_path.suffix.lower() or ".png"
-    encoded_ok, encoded = cv2.imencode(extension, image)
+    try:
+        encoded_ok, encoded = cv2.imencode(extension, image)
+    except cv2.error as exc:
+        raise OSError(f"Could not encode image as {extension}") from exc
     if not encoded_ok:
         raise OSError(f"Could not write image: {output_path}")
     output_path.write_bytes(encoded.tobytes())
@@ -611,10 +613,12 @@ def main():
     if bool(args.board_json) != bool(args.tile_audit):
         parser.error("--board-json and --tile-audit must be used together")
 
-    image = read_image(args.image)
+    try:
+        image = read_image(args.image)
+    except OSError as exc:
+        parser.error(f"could not read image: {exc}")
     if image is None:
-        print(f"Error: Could not read {args.image}", file=sys.stderr)
-        sys.exit(1)
+        parser.error(f"could not decode image: {args.image}")
 
     print(f"Image: {image.shape[1]}x{image.shape[0]}")
 
@@ -634,15 +638,24 @@ def main():
         print(line)
 
     result = draw_grid_overlay(image, bx, by, bw, bh, tiles)
-    write_image(args.output, result)
+    try:
+        write_image(args.output, result)
+    except OSError as exc:
+        parser.error(str(exc))
     print(f"\nSaved: {args.output}")
 
     if args.tile_audit:
-        board, blanks = load_board_json(args.board_json)
+        try:
+            board, blanks = load_board_json(args.board_json)
+        except (OSError, ValueError) as exc:
+            parser.error(f"could not load board: {exc}")
         audit, entries = draw_tile_audit(
             image, bx, by, bw, bh, tiles, board, blanks
         )
-        write_image(args.tile_audit, audit)
+        try:
+            write_image(args.tile_audit, audit)
+        except OSError as exc:
+            parser.error(str(exc))
         mismatches = sum(
             entry["detected"] != entry["transcribed"]
             for entry in entries

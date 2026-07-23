@@ -9,6 +9,12 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate skill frontmatter
+        run: ruby .github/scripts/validate_skills.rb
+
       - name: Mint short-lived app token
         id: app-token
         uses: actions/create-github-app-token@v3

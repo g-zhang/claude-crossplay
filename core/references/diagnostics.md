@@ -18,8 +18,9 @@ limit, or engine equivalence is under investigation.
   `moves_template.py`.
 - `-q` or `--quiet` suppresses the initial board print.
 
-The first trie solve writes `<dictionary>.trie.pkl` beside the dictionary.
-Delete that cache only after regenerating or replacing the dictionary.
+Trie and GADDAG indexes are built in memory from the validated dictionary on
+each process start. The default trie takes little time to build and avoids
+trusting stale or executable serialized cache files.
 
 ## Overlay calibration
 
@@ -58,5 +59,7 @@ keeps image evidence and JSON claims side by side for explicit verification.
 - **Tile-audit mismatch:** A red card means the detector and `board.json`
   disagree about whether the cell is occupied. Resolve it against the original
   screenshot before solving.
-- **Stale trie cache:** Remove `<dictionary>.trie.pkl` after changing the
-  dictionary.
+- **Input rejected:** Keep board coordinates within `0..14`, use one ASCII
+  letter per occupied cell, represent existing blanks in lowercase, and pass a
+  rack of one to seven `A-Z` or `?` tiles. The board and rack together may
+  contain at most three blanks.

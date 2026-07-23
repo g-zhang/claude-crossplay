@@ -29,12 +29,7 @@ Each variant is a path from the root ending at a TERMINAL node.
 Public helpers:
     gaddagize(word)                 -> list[str]   variants to insert
     build_gaddag(words)             -> root        root dict
-    save_gaddag(root, path)          pickle dump
-    load_gaddag(path)                pickle load
-    load_or_build_gaddag(dict_path, cache_path) -> root
 """
-import pickle
-from pathlib import Path
 
 
 SEP = '>'
@@ -68,36 +63,6 @@ def build_gaddag(words):
                     node[ch] = child
                 node = child
             node[TERMINAL] = True
-    return root
-
-
-def save_gaddag(root, path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'wb') as f:
-        pickle.dump(root, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def load_gaddag(path):
-    with open(path, 'rb') as f:
-        return pickle.load(f)
-
-
-def load_or_build_gaddag(dict_path, cache_path):
-    """Return the GADDAG root. Load from cache_path if it exists;
-    otherwise build from dict_path and save to cache_path.
-
-    The dictionary file is treated as static. To force a rebuild,
-    delete the cache file.
-    """
-    cache_path = Path(cache_path)
-    if cache_path.exists():
-        return load_gaddag(cache_path)
-    dict_path = Path(dict_path)
-    with open(dict_path, 'r', encoding='utf-8') as f:
-        words = [line.strip().upper() for line in f if line.strip()]
-    root = build_gaddag(words)
-    save_gaddag(root, cache_path)
     return root
 
 

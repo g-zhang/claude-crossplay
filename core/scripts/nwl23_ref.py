@@ -218,9 +218,9 @@ if __name__ == "__main__":
     print(f"U dumps: {len(U_DUMPS)}")
     
     # Test
-    print(f"\nValid 2-letter: EW={'✓' if is_valid_2letter('EW') else '✗'}")
-    print(f"Valid 2-letter: EZ={'✓' if is_valid_2letter('EZ') else '✗'}")
+    print(f"\nValid 2-letter: EW={'YES' if is_valid_2letter('EW') else 'NO'}")
+    print(f"Valid 2-letter: EZ={'YES' if is_valid_2letter('EZ') else 'NO'}")
     print(f"\nBingo check SATIRE: {check_bingo_potential('SATIRE')}")
     print(f"Bingo check XQQZZW: {check_bingo_potential('XQQZZW')}")
-    print(f"\nShort X words (≤3): {get_premium_words('X', 3)}")
+    print(f"\nShort X words (<=3): {get_premium_words('X', 3)}")
     print(f"\nDumps for AEIOU: {find_dump_words('AEIOU')}")
