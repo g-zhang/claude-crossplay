@@ -19,7 +19,7 @@ Given a screenshot of a Crossplay board and your current tile rack, this skill:
 | Script | Purpose |
 |--------|---------|
 | [`setup_dict.py`](core/scripts/setup_dict.py) | Clones NWL23 word lists and builds `dict.txt` |
-| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid on a board screenshot for manual tile reading |
+| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid and a board-aware tile audit with enlarged score corners |
 | [`solver.py`](core/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
 | [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board confirmations and move visualizations through a reusable CLI |
 | [`nwl23_ref.py`](core/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
@@ -51,9 +51,10 @@ This skill is designed to be invoked through a Claude conversation. Drop a Cross
 Claude in the background will:
 
 1. Run `grid_overlay.py` on your screenshot to number the cells
-2. Read tile positions manually from the overlay
+2. Read tile positions manually, then audit each source score corner against
+   the JSON letter and blank status
 3. Verify the board by checking the last play's score
-4. Show you an HTML board confirmation before solving
+4. Show you the tile audit and an HTML board confirmation before solving
 5. Run the solver and present the top moves visually
 
 ## Running locally
@@ -80,7 +81,13 @@ python core/scripts/setup_dict.py --output dict.txt
 # 2. Generate a grid overlay for reading tile positions
 python core/scripts/grid_overlay.py screenshot.png -o overlay.png
 
-# 3. Run the solver (board.json must be constructed manually or by Claude)
+# 3. Transcribe board.json, then audit every score corner and blank marker
+python core/scripts/grid_overlay.py screenshot.png \
+    -o overlay.png \
+    --board-json board.json \
+    --tile-audit tile-audit.png
+
+# 4. Run the solver
 python core/scripts/solver.py \
     --board board.json \
     --rack AILETEC \
@@ -101,7 +108,8 @@ python core/scripts/solver.py \
 }
 ```
 
-Keys are `"row,col"` (0-indexed, 0 = top-left).
+Keys are `"row,col"` (0-indexed, 0 = top-left). Use lowercase for a tile
+played as a blank; for example, `"8,8": "k"` represents a K worth zero points.
 
 ### Package skill
 

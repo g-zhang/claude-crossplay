@@ -159,6 +159,27 @@ def print_full_board(board, new_tiles=None, blanks=None, file=sys.stdout):
         print(row, file=file)
 
 
+def format_blank_inventory(board, blanks):
+    """Describe blank metadata without implying it was image-verified."""
+    if blanks:
+        marked = ", ".join(
+            f"{board[r][c]}@({r},{c})"
+            for r, c in sorted(blanks)
+        )
+        status = f"marked as 0-point blanks: {marked}."
+    else:
+        status = "no 0-point blanks marked."
+
+    reminder = (
+        "Verify against the tile-audit score corners: every displayed 0 "
+        "must be lowercase in board JSON, and every lowercase tile must "
+        "display 0."
+    )
+    if len(blanks) > 3:
+        reminder += " WARNING: Crossplay has only three blank tiles."
+    return f"Blank audit: {status} {reminder}"
+
+
 # ============================================================
 # Core solver
 # ============================================================
@@ -1222,6 +1243,8 @@ def main():
     if args.confirm_only:
         print("\nCurrent board (confirm with user before solving):")
         print_full_board(board, blanks=blanks)
+        print()
+        print(format_blank_inventory(board, blanks))
         return
 
     if not args.rack or not args.dict:

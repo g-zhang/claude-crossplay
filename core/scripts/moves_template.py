@@ -36,6 +36,9 @@ CSS = """<style>
   --new-tile: #E8913A;
   --new-tile-blank: #F0A866;
   --new-border: #c47020;
+  --blank-border: #ffe066;
+  --blank-audit-bg: #fff4cc;
+  --blank-audit-border: #c28a00;
   --star: #ccc;
 }
 
@@ -57,6 +60,9 @@ CSS = """<style>
     --new-tile: #d4801f;
     --new-tile-blank: #e09a3d;
     --new-border: #b86a15;
+    --blank-border: #ffdc62;
+    --blank-audit-bg: #3b3218;
+    --blank-audit-border: #d8ad34;
     --star: #555;
   }
 }
@@ -70,13 +76,17 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell{display:flex;align-items:center;justify-content:center;background:var(--cell-bg);font-size:12px;font-weight:600;aspect-ratio:1;position:relative;min-width:0;overflow:hidden}
 .cell.hdr{background:var(--hdr-bg);font-size:10px;color:var(--hdr-text);font-weight:400;aspect-ratio:auto}
 .cell.tile{background:var(--tile);color:#fff;border-radius:2px}
-.cell.tile.blank{background:var(--tile-blank)}
+.cell.tile.blank{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border)}
 .cell.new{background:var(--new-tile);color:#fff;border-radius:2px;box-shadow:inset 0 0 0 2px var(--new-border)}
-.cell.new.blank{background:var(--new-tile-blank,#f0a866)}
+.cell.new.blank{background:var(--new-tile-blank,#f0a866);box-shadow:inset 0 0 0 2px var(--blank-border)}
 .cell.star{background:var(--hdr-bg);font-size:13px;color:var(--star)}
 .cell.empty{background:var(--cell-bg)}
 .cell.prem{font-size:8px;font-weight:500}
 .pts{position:absolute;bottom:0;right:1px;font-size:6px;opacity:0.75;font-weight:400}
+.cell.blank .pts{font-size:9px;opacity:1;font-weight:800;color:#fff}
+.blank-mark{position:absolute;top:1px;left:2px;font-size:6px;line-height:1;font-weight:800;color:var(--blank-border)}
+.blank-audit{max-width:540px;margin:0 0 12px;padding:10px 12px;border:2px solid var(--blank-audit-border);border-radius:6px;background:var(--blank-audit-bg);font-size:13px;line-height:1.45}
+.blank-swatch{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border);color:#fff;font-size:7px;font-weight:800;text-align:center;line-height:16px}
 .legend{display:flex;gap:16px;margin:12px 0 24px;font-size:12px;color:var(--text-sec);flex-wrap:wrap}
 .leg{display:flex;align-items:center;gap:4px}
 .leg-box{width:16px;height:16px;border-radius:3px;display:inline-block}
@@ -134,13 +144,17 @@ def cell_html(r, c, board, new_tiles, premium):
         is_blank = raw.islower()
         pts = 0 if is_blank else TILE_PTS.get(letter, 0)
         cls = "cell new blank" if is_blank else "cell new"
-        return f'<div class="{cls}">{escape(letter)}<span class="pts">{pts}</span></div>'
+        blank_mark = '<span class="blank-mark">B</span>' if is_blank else ""
+        return (f'<div class="{cls}">{blank_mark}{escape(letter)}'
+                f'<span class="pts">{pts}</span></div>')
     elif key in board:
         letter = board[key].upper()
         is_blank = board[key].islower()
         pts = 0 if is_blank else TILE_PTS.get(letter, 0)
         cls = "cell tile blank" if is_blank else "cell tile"
-        return f'<div class="{cls}">{escape(letter)}<span class="pts">{pts}</span></div>'
+        blank_mark = '<span class="blank-mark">B</span>' if is_blank else ""
+        return (f'<div class="{cls}">{blank_mark}{escape(letter)}'
+                f'<span class="pts">{pts}</span></div>')
     else:
         prem = premium.get((r, c))
         if r == 7 and c == 7:
@@ -177,6 +191,32 @@ def _norm_premium(d):
     return out
 
 
+def blank_audit_html(board):
+    """Render an explicit, non-authoritative inventory of marked blanks."""
+    marked = []
+    for key, raw in board.items():
+        if isinstance(raw, str) and raw.islower():
+            row, col = key.split(",")
+            marked.append((int(row), int(col), raw.upper()))
+    marked.sort()
+
+    if marked:
+        labels = ", ".join(
+            f"{escape(letter)} at ({row},{col})"
+            for row, col, letter in marked
+        )
+        status = f"board.json marks {labels} as blank (0 points)."
+    else:
+        status = "board.json marks no blank tiles."
+
+    return (
+        '<div class="blank-audit"><strong>Blank audit:</strong> '
+        f"{status} This is not automatic verification. Compare every "
+        "tile-audit score corner with this board: each displayed 0 must be "
+        "lowercase in JSON, and each lowercase tile must display 0.</div>"
+    )
+
+
 def _write_html(parts, output_path, message):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +232,7 @@ def generate_board_confirm_html(board, premium, output_path, title="Board Confir
     parts.append(f'<h1>{escape(str(title))}</h1>')
     if subtitle:
         parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
+    parts.append(blank_audit_html(board))
     parts.append('<div class="board"><div class="cell hdr"></div>')
     for c in range(15):
         parts.append(f'<div class="cell hdr">{c}</div>')
@@ -202,6 +243,7 @@ def generate_board_confirm_html(board, premium, output_path, title="Board Confir
     parts.append('</div>')
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Tile</div>
+  <div class="leg"><span class="leg-box blank-swatch">B0</span> Blank (0 points)</div>
   <div class="leg"><span class="leg-box" style="background:#FAECE7;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993C1D">3W</span> Triple Word</div>
   <div class="leg"><span class="leg-box" style="background:#FBEAF0;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993556">2W</span> Double Word</div>
   <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>
@@ -222,6 +264,7 @@ def generate_moves_html(title, subtitle, board, premium, moves, output_path):
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Existing</div>
   <div class="leg"><span class="leg-box" style="background:var(--new-tile);box-shadow:inset 0 0 0 2px var(--new-border)"></span> Play here</div>
+  <div class="leg"><span class="leg-box blank-swatch">B0</span> Blank (0 points)</div>
   <div class="leg"><span class="leg-box" style="background:#FAECE7;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993C1D">3W</span> Triple Word</div>
   <div class="leg"><span class="leg-box" style="background:#FBEAF0;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993556">2W</span> Double Word</div>
   <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>

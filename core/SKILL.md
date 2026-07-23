@@ -37,7 +37,8 @@ versions.
 ## Bundled resources
 
 - `scripts/setup_dict.py`: build the NWL23 dictionary.
-- `scripts/grid_overlay.py`: locate the board and draw a numbered overlay.
+- `scripts/grid_overlay.py`: locate the board, draw a numbered overlay, and
+  generate a board-aware tile audit with enlarged score corners.
 - `scripts/solver.py`: validate board structure and generate scored moves.
 - `scripts/moves_template.py`: render board confirmation and move HTML.
 - `scripts/nwl23_ref.py`: curated strategic word lists and lookup helpers.
@@ -74,9 +75,9 @@ return only subtle text hints:
 - Describe a strategic pattern without revealing the exact word or cells.
 - Mention an approximate score range when useful.
 
-Generate the overlay and board-confirmation HTML, but not move HTML. The board
-still needs user confirmation because hints based on a misread tile are not
-useful.
+Generate the overlay, tile audit, and board-confirmation HTML, but not move
+HTML. The board still needs user confirmation because hints based on a misread
+tile or missed blank are not useful.
 
 ### Full solver mode
 
@@ -87,7 +88,9 @@ top moves.
 ## Board workflow
 
 Use an incrementing round number `{N}` for every screenshot solved in the
-conversation. This prevents later artifacts from overwriting earlier ones.
+conversation. This applies to `overlay-{N}.png`, `tile-audit-{N}.png`,
+`board-{N}.html`, and `moves-{N}.html`, preventing later artifacts from
+overwriting earlier ones.
 
 ### 1. Set up the dictionary
 
@@ -124,15 +127,37 @@ occupied cell into `<WORK_DIR>/board.json`:
 }
 ```
 
-Coordinates are zero-based `row,column`. Use lowercase only for a board tile
-that was played as a blank; lowercase tells the solver that tile scores zero.
+Coordinates are zero-based `row,column`. Lowercase means a board tile was
+played as a blank and scores zero. Do not infer blank status from the displayed
+letter: a blank used as K still displays K, but its score corner displays 0.
 
 ### 3. Check the reconstruction
+
+Generate a tile audit after the first transcription:
+
+```bash
+python "<SKILL_DIR>/scripts/grid_overlay.py" "<SCREENSHOT>" --output "<OUTPUT_DIR>/overlay-{N}.png" --board-json "<WORK_DIR>/board.json" --tile-audit "<OUTPUT_DIR>/tile-audit-{N}.png"
+```
+
+Each card places the full source tile and an enlarged score corner beside what
+`board.json` claims for that coordinate. Cards cover the union of image-detected
+and transcribed cells, so a red `detected: NO` or `JSON: MISSING` header exposes
+coverage mismatches.
+
+Audit every card in both directions:
+
+- Every source tile whose score corner displays `0` must be lowercase in
+  `board.json`.
+- Every lowercase tile in `board.json` must display `0` in the source score
+  corner.
+- Correct every detector/JSON mismatch, then regenerate the audit.
 
 Read `references/game-rules.md` and independently compute the most recently
 reported play when the screenshot identifies its placement and score. A score
 mismatch is strong evidence of a shifted column, missed tile, misread letter,
-or blank.
+or blank. If the reconstruction scores higher than the app, first inspect every
+tile in that word for a displayed `0`; treating a played blank as a full-value
+letter creates exactly that pattern.
 
 Also inspect the solver's full-board rendering:
 
@@ -140,9 +165,10 @@ Also inspect the solver's full-board rendering:
 python "<SKILL_DIR>/scripts/solver.py" --board "<WORK_DIR>/board.json" --confirm-only
 ```
 
-This command renders the transcription but does not perform dictionary
-validation. Visually inspect contiguous letter sequences and correct obvious
-nonsense against the screenshot.
+This command renders the transcription and prints the blanks currently marked
+in JSON, but it does not perform dictionary or image validation. Compare its
+blank inventory to `tile-audit-{N}.png`, then inspect contiguous letter
+sequences and correct obvious nonsense against the screenshot.
 
 ### 4. Confirm the board with the user
 
@@ -152,10 +178,13 @@ Render a confirmation page through the bundled CLI:
 python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.json" --output "<OUTPUT_DIR>/board-{N}.html" --title "Board confirmation" --subtitle "Round {N}"
 ```
 
-Present `board-{N}.html` and `overlay-{N}.png`, then wait for explicit
-confirmation or corrections. This checkpoint is intentionally before the
-solve because a single bad tile can invalidate every recommendation. Apply
-corrections to `board.json` and regenerate the page before continuing.
+Present `board-{N}.html`, `overlay-{N}.png`, and `tile-audit-{N}.png`. State the
+blank coordinates you marked, including when the list is empty, and ask the
+user to confirm both the letters and all score-0 blank tiles. Wait for explicit
+confirmation or corrections. This checkpoint is intentionally before the solve
+because a single bad tile can invalidate every recommendation. Apply
+corrections to `board.json`, regenerate the audit and page, and repeat the
+confirmation before continuing.
 
 ### 5. Run the solver
 

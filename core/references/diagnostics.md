@@ -36,10 +36,18 @@ A good fit normally has a residual below 3 pixels and horizontal and vertical
 cell sizes within about 1 percent. Tile detection uses an HSV blue range and a
 cell coverage threshold of 0.42.
 
+With `--board-json` and `--tile-audit`, the script also creates one card for
+every cell present in either the detector or the transcription. Each card shows
+the full source tile, an enlarged top-right score corner, and the JSON letter,
+blank status, and expected points. It does not OCR or infer the score; the audit
+keeps image evidence and JSON claims side by side for explicit verification.
+
 ## Troubleshooting
 
 - **Score mismatch:** Recheck column alignment, blank tiles, and the tile
-  values in `game-rules.md`.
+  values in `game-rules.md`. When the reconstruction is too high, inspect the
+  affected word's score corners for a displayed 0 that should be lowercase in
+  JSON.
 - **No moves:** Recheck board reconstruction and confirm existing words are
   present in `dict.txt`.
 - **Misaligned overlay:** Inspect the calibration diagnostics printed by
@@ -47,5 +55,8 @@ cell coverage threshold of 0.42.
   below 3 pixels, and low axis disagreement.
 - **False tile detections:** Increase the coverage threshold when premium
   squares are classified as tiles; decrease it when real tiles are missed.
+- **Tile-audit mismatch:** A red card means the detector and `board.json`
+  disagree about whether the cell is occupied. Resolve it against the original
+  screenshot before solving.
 - **Stale trie cache:** Remove `<dictionary>.trie.pkl` after changing the
   dictionary.

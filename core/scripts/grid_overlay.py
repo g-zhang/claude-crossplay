@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 Crossplay grid overlay tool.
-Detects the board region, draws numbered grid lines, and highlights tile cells.
-Output image lets Claude (or a human) read letters with exact row/col positions.
+Detects the board region, highlights tile cells, and builds a tile audit sheet.
 """
+
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
-import sys
-from pathlib import Path
+
+from solver import TILE_PTS, load_board_json
 
 
 def find_premium_clusters(profile, min_sat=20, min_gap=5):
@@ -86,14 +88,14 @@ def find_board_region(image):
     init_cell_h = board_h / 15.0
     init_cell_w = board_w / 15.0
     # Width detection is reliable (board spans nearly full image width).
-    # Height detection is unreliable — UI text/dividers above the board can
+    # Height detection is unreliable -- UI text/dividers above the board can
     # create strong edges that inflate the detected height. Trust width.
     trusted_cell = init_cell_w
 
     # Board region expressed in crop y-space.
     board_top_c = y1 - sy1
     board_bot_c = y2 - sy1
-    tol = trusted_cell * 1.5  # generous — real board may sit up to ~1 cell outside edge bbox
+    tol = trusted_cell * 1.5  # board may sit up to ~1 cell outside edge bbox
 
     def _filter_to_board(clusters):
         return [c for c in clusters if (board_top_c - tol) <= c[0] <= (board_bot_c + tol)]
@@ -130,7 +132,7 @@ def find_board_region(image):
         cells of any premium row. Pick the alignment with the most matches
         (and lowest residual error as tiebreaker). After finding the best
         alignment, refine cell size by linear-regressing matched-cluster y
-        positions against their assigned row numbers — this is substantially
+        positions against their assigned row numbers -- this is substantially
         more accurate than the input `cell` estimate because premium-to-
         premium distances span many cells and aren't subject to the edge-
         detection fuzz that inflates width-based estimates.
@@ -163,7 +165,7 @@ def find_board_region(image):
             return None, None, None
 
         # Refine cell size from matched clusters. Fit y = row*cell + row_0_y
-        # using the endpoints (first and last matched pair) — robust to
+        # using the endpoints (first and last matched pair) -- robust to
         # outliers and exact when pairs land cleanly on integer rows.
         pairs = sorted(best[3])  # sorted by y
         first_cy, first_row = pairs[0]
@@ -209,7 +211,7 @@ def find_board_region(image):
             cand = (bot_y - top_y) / 14.0
             if abs(cand - trusted_cell) / trusted_cell <= 0.10:
                 cell = cand
-                # Treat naive's top_y as row 0's center — this is a hypothesis,
+                # Treat naive's top_y as row 0's center -- this is a hypothesis,
                 # but tracking row_0_y lets us recompute grid_top cleanly if
                 # horizontal anchor refines the cell size later.
                 row_0_y = top_y
@@ -243,7 +245,7 @@ def find_board_region(image):
 
     if len(top_h_cl_f) >= 2:
         # We have accurate cell size from the vertical pattern match's linear
-        # regression. Use horizontal anchor ONLY for x-position refinement —
+        # regression. Use horizontal anchor ONLY for x-position refinement --
         # specifically, use the first cluster as col 0's center. Deriving cell
         # from first/last cluster distance is noisier than the vertical
         # pattern's 11-cell baseline, so we don't override `cell` here.
@@ -270,21 +272,21 @@ def find_board_region(image):
         grid_h += abs_y1
         abs_y1 = 0
 
-    # Invariant: Crossplay boards are always 15×15 squares of identical cells.
-    # If grid_w and grid_h diverge, something went wrong upstream — either a
+    # Invariant: Crossplay boards are always 15x15 squares of identical cells.
+    # If grid_w and grid_h diverge, something went wrong upstream -- either a
     # detection bug or the image-bounds clamp cropped one axis. Enforce square
     # by collapsing to a single side length, and warn so it's visible in logs.
     if grid_w != grid_h:
         side = min(grid_w, grid_h)
-        print(f"  ⚠ Non-square grid detected ({grid_w}×{grid_h}); "
-              f"collapsing to {side}×{side}")
+        print(f"  WARNING: Non-square grid detected ({grid_w}x{grid_h}); "
+              f"collapsing to {side}x{side}")
         grid_w = grid_h = side
 
     # Sanity check: derived cell size should match what we'd get from the
     # final square grid. If not, there's a logic bug.
     final_cell = grid_w / 15.0
     if abs(final_cell - cell) > 0.5:
-        print(f"  ⚠ Cell size mismatch: tracked cell={cell:.1f}px, "
+        print(f"  WARNING: Cell size mismatch: tracked cell={cell:.1f}px, "
               f"final cell={final_cell:.1f}px")
 
     print(f"  Phase1 edge cell: {init_cell_w:.1f}px (w) / {init_cell_h:.1f}px (h)")
@@ -293,14 +295,14 @@ def find_board_region(image):
     print(f"  Vertical: {anchor_used}, cell={cell:.1f}px")
     print(f"  Horizontal: {x_anchor_used}")
 
-    assert grid_w == grid_h, f"grid must be square: got {grid_w}×{grid_h}"
+    assert grid_w == grid_h, f"grid must be square: got {grid_w}x{grid_h}"
     return abs_x1, abs_y1, grid_w, grid_h
 
 
 def detect_tile_cells(board_crop, grid_size=15):
     """Return a 15x15 bool array: True where a blue tile is detected."""
     hsv = cv2.cvtColor(board_crop, cv2.COLOR_BGR2HSV)
-    # Tuned for Crossplay blue tiles (H≈85-130, S≈55+, V≈80+)
+    # Tuned for Crossplay blue tiles (H~85-130, S~55+, V~80+)
     # Premium squares have S<63 and ratio<0.40, so 0.42 threshold separates cleanly
     lower_blue = np.array([85, 55, 80])
     upper_blue = np.array([130, 255, 255])
@@ -320,6 +322,208 @@ def detect_tile_cells(board_crop, grid_size=15):
             ratio = np.sum(cell_mask > 0) / max(1, cell_mask.size)
             tiles[r][c] = ratio > 0.42
     return tiles
+
+
+def collect_tile_audit_entries(detected_tiles, board, blanks, grid_size=15):
+    """Return audit entries for every detected or transcribed tile."""
+    detected = {
+        (r, c)
+        for r in range(grid_size)
+        for c in range(grid_size)
+        if detected_tiles[r][c]
+    }
+    transcribed = {
+        (r, c)
+        for r in range(grid_size)
+        for c in range(grid_size)
+        if board[r][c] != "."
+    }
+
+    entries = []
+    for r, c in sorted(detected | transcribed):
+        in_board = (r, c) in transcribed
+        is_blank = in_board and (r, c) in blanks
+        letter = board[r][c] if in_board else None
+        entries.append({
+            "row": r,
+            "col": c,
+            "detected": (r, c) in detected,
+            "transcribed": in_board,
+            "letter": letter,
+            "blank": is_blank,
+            "points": (
+                0
+                if is_blank
+                else TILE_PTS.get(letter, 0) if in_board else None
+            ),
+        })
+    return entries
+
+
+def draw_tile_audit(
+        image, bx, by, bw, bh, detected_tiles, board, blanks,
+        grid_size=15, columns=4):
+    """Create cards comparing source score corners with board JSON claims."""
+    entries = collect_tile_audit_entries(
+        detected_tiles, board, blanks, grid_size
+    )
+
+    page_header_h = 64
+    card_w = 268
+    card_h = 202
+    rows = max(1, (len(entries) + columns - 1) // columns)
+    sheet = np.full(
+        (page_header_h + rows * card_h, columns * card_w, 3),
+        255,
+        dtype=np.uint8,
+    )
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(
+        sheet,
+        "Tile audit: compare each screenshot score corner with board JSON",
+        (10, 24),
+        font,
+        0.62,
+        (20, 20, 20),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        sheet,
+        "Displayed 0 <-> lowercase blank; investigate red detection mismatches",
+        (10, 50),
+        font,
+        0.52,
+        (20, 20, 20),
+        1,
+        cv2.LINE_AA,
+    )
+
+    if not entries:
+        cv2.putText(
+            sheet,
+            "No detected or transcribed tiles.",
+            (10, page_header_h + 40),
+            font,
+            0.6,
+            (0, 0, 180),
+            2,
+            cv2.LINE_AA,
+        )
+        return sheet, entries
+
+    cell_w = bw / grid_size
+    cell_h = bh / grid_size
+    image_h, image_w = image.shape[:2]
+    image_size = 120
+
+    for index, entry in enumerate(entries):
+        card_row, card_col = divmod(index, columns)
+        x = card_col * card_w
+        y = page_header_h + card_row * card_h
+
+        mismatch = entry["detected"] != entry["transcribed"]
+        if mismatch:
+            header_color = (210, 210, 255)
+            border_color = (0, 0, 200)
+        elif entry["blank"]:
+            header_color = (180, 245, 255)
+            border_color = (0, 150, 190)
+        else:
+            header_color = (238, 238, 238)
+            border_color = (150, 150, 150)
+
+        cv2.rectangle(
+            sheet, (x + 2, y + 2), (x + card_w - 3, y + card_h - 3),
+            border_color, 2
+        )
+        cv2.rectangle(
+            sheet, (x + 4, y + 4), (x + card_w - 5, y + 48),
+            header_color, -1
+        )
+
+        detected_text = "yes" if entry["detected"] else "NO"
+        cv2.putText(
+            sheet,
+            f"({entry['row']},{entry['col']}) detected: {detected_text}",
+            (x + 9, y + 21),
+            font,
+            0.45,
+            (20, 20, 20),
+            1,
+            cv2.LINE_AA,
+        )
+
+        if not entry["transcribed"]:
+            json_text = "JSON: MISSING"
+        elif entry["blank"]:
+            json_text = (
+                f"JSON: {entry['letter'].lower()} -> BLANK, 0 pts"
+            )
+        else:
+            json_text = (
+                f"JSON: {entry['letter']} -> {entry['points']} pts"
+            )
+        cv2.putText(
+            sheet,
+            json_text,
+            (x + 9, y + 42),
+            font,
+            0.43,
+            (20, 20, 20),
+            1,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            sheet, "full tile", (x + 9, y + 65),
+            font, 0.38, (70, 70, 70), 1, cv2.LINE_AA
+        )
+        cv2.putText(
+            sheet, "score corner", (x + 140, y + 65),
+            font, 0.38, (70, 70, 70), 1, cv2.LINE_AA
+        )
+
+        r, c = entry["row"], entry["col"]
+        x1 = max(0, int(round(bx + c * cell_w)))
+        x2 = min(image_w, int(round(bx + (c + 1) * cell_w)))
+        y1 = max(0, int(round(by + r * cell_h)))
+        y2 = min(image_h, int(round(by + (r + 1) * cell_h)))
+        cell = image[y1:y2, x1:x2]
+
+        if cell.size == 0:
+            cv2.putText(
+                sheet, "CROP FAILED", (x + 9, y + 130),
+                font, 0.52, (0, 0, 200), 2, cv2.LINE_AA
+            )
+            continue
+
+        whole = cv2.resize(
+            cell, (image_size, image_size), interpolation=cv2.INTER_CUBIC
+        )
+        score_y2 = max(1, int(cell.shape[0] * 0.55))
+        score_x1 = min(
+            cell.shape[1] - 1, int(cell.shape[1] * 0.45)
+        )
+        score_crop = cell[:score_y2, score_x1:]
+        score = cv2.resize(
+            score_crop,
+            (image_size, image_size),
+            interpolation=cv2.INTER_CUBIC,
+        )
+
+        image_y = y + 72
+        sheet[
+            image_y:image_y + image_size,
+            x + 8:x + 8 + image_size,
+        ] = whole
+        sheet[
+            image_y:image_y + image_size,
+            x + 140:x + 140 + image_size,
+        ] = score
+
+    return sheet, entries
 
 
 def draw_grid_overlay(image, bx, by, bw, bh, tiles, grid_size=15):
@@ -371,14 +575,43 @@ def draw_grid_overlay(image, bx, by, bw, bh, tiles, grid_size=15):
     return out
 
 
+def write_image(path, image):
+    """Write an image, creating parent directories and surfacing failures."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    extension = output_path.suffix.lower() or ".png"
+    encoded_ok, encoded = cv2.imencode(extension, image)
+    if not encoded_ok:
+        raise OSError(f"Could not write image: {output_path}")
+    output_path.write_bytes(encoded.tobytes())
+
+
+def read_image(path):
+    """Read an image through Python I/O so Unicode Windows paths work."""
+    image_path = Path(path)
+    encoded = np.frombuffer(image_path.read_bytes(), dtype=np.uint8)
+    return cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Crossplay grid overlay")
     parser.add_argument("image", help="Path to screenshot")
-    parser.add_argument("-o", "--output", default="/home/claude/grid_overlay.png")
+    parser.add_argument("-o", "--output", default="grid_overlay.png")
+    parser.add_argument(
+        "--board-json",
+        help="Board JSON to compare against source tiles",
+    )
+    parser.add_argument(
+        "--tile-audit",
+        help="Output path for board-aware tile audit PNG",
+    )
     args = parser.parse_args()
 
-    image = cv2.imread(str(args.image))
+    if bool(args.board_json) != bool(args.tile_audit):
+        parser.error("--board-json and --tile-audit must be used together")
+
+    image = read_image(args.image)
     if image is None:
         print(f"Error: Could not read {args.image}", file=sys.stderr)
         sys.exit(1)
@@ -401,8 +634,24 @@ def main():
         print(line)
 
     result = draw_grid_overlay(image, bx, by, bw, bh, tiles)
-    cv2.imwrite(args.output, result)
+    write_image(args.output, result)
     print(f"\nSaved: {args.output}")
+
+    if args.tile_audit:
+        board, blanks = load_board_json(args.board_json)
+        audit, entries = draw_tile_audit(
+            image, bx, by, bw, bh, tiles, board, blanks
+        )
+        write_image(args.tile_audit, audit)
+        mismatches = sum(
+            entry["detected"] != entry["transcribed"]
+            for entry in entries
+        )
+        print(
+            f"Tile audit: {len(entries)} cards, "
+            f"{mismatches} detection/JSON mismatches"
+        )
+        print(f"Saved: {args.tile_audit}")
 
 
 if __name__ == "__main__":
