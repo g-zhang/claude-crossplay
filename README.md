@@ -8,10 +8,11 @@ A Claude AI [skill](core/SKILL.md) for solving [NYT Crossplay](https://www.nytim
 Given a screenshot of a Crossplay board and your current tile rack, this skill:
 
 1. Detects tile positions on the board using HSV color filtering and dual-anchor grid calibration
-2. Audits every source score corner against the transcribed letter and blank status
+2. Audits every source score corner in responsive, filterable verification cards
 3. Builds a tournament-grade dictionary from the **NWL23** word list (~145K words)
 4. Finds all legal moves and scores them correctly (letter/word multipliers, cross-words, 40-pt bingo bonus)
-5. Outputs the top moves as standalone HTML visualizations with strategic notes
+5. Outputs standalone HTML move boards with strategic notes and per-move
+   SVG and PNG copy buttons
 
 ## Scripts
 
@@ -19,9 +20,9 @@ Given a screenshot of a Crossplay board and your current tile rack, this skill:
 |--------|---------|
 | [`fetch_core.py`](src/scripts/fetch_core.py) | Creates a fresh sparse checkout for the auto-updating bootstrap skill |
 | [`setup_dict.py`](core/scripts/setup_dict.py) | Fetches a pinned NWL23 source revision and builds `dict.txt` |
-| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid and a board-aware tile audit with enlarged score corners |
+| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid and a metadata-backed tile audit with enlarged score corners |
 | [`solver.py`](core/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
-| [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board confirmations and move visualizations through a reusable CLI |
+| [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board confirmations and move visualizations with clipboard-ready boards |
 | [`nwl23_ref.py`](core/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
 
 Detailed game rules, dictionary guidance, and troubleshooting live under
@@ -54,7 +55,7 @@ Claude in the background will:
 2. Read tile positions manually, then audit each source score corner against
    the JSON letter and blank status
 3. Verify the board by checking the last play's score when it is available
-4. Show you the tile audit and an HTML board confirmation before solving
+4. Show one HTML board confirmation with the tile audit embedded before solving
 5. Run the solver and present the top moves visually
 
 ## Running locally
@@ -87,8 +88,8 @@ python core/scripts/grid_overlay.py screenshot.png --output overlay.png --board-
 # 4. Inspect the parsed board and explicit blank inventory.
 python core/scripts/solver.py --board board.json --confirm-only
 
-# 5. Render board confirmation and verify it before solving.
-python core/scripts/moves_template.py board --board board.json --output board.html --title "Board confirmation"
+# 5. Render a responsive board confirmation with two-way audit-card links.
+python core/scripts/moves_template.py board --board board.json --tile-audit tile-audit.png --output board.html --title "Board confirmation"
 
 # 6. After confirmation, generate renderer-compatible move data.
 python core/scripts/solver.py --board board.json --rack AILETEC --dict dict.txt --top 5 --json-output moves.json --quiet
@@ -96,6 +97,9 @@ python core/scripts/solver.py --board board.json --rack AILETEC --dict dict.txt 
 # 7. Render the recommendations.
 python core/scripts/moves_template.py moves --board board.json --moves moves.json --output moves.html --title "Crossplay recommendations"
 ```
+
+Pass `--no-script` to either renderer command to omit JavaScript. For move
+pages, this also omits the `Copy SVG` and `Copy PNG` controls.
 
 ### `board.json` format
 

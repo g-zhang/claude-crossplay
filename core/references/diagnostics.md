@@ -42,6 +42,8 @@ every cell present in either the detector or the transcription. Each card shows
 the full source tile, an enlarged top-right score corner, and the JSON letter,
 blank status, and expected points. It does not OCR or infer the score; the audit
 keeps image evidence and JSON claims side by side for explicit verification.
+The PNG carries layout metadata that the board-confirmation renderer uses to
+build theme-aware cards which reflow across phone and desktop widths.
 
 ## Troubleshooting
 

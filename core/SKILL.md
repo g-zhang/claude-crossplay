@@ -179,14 +179,19 @@ sequences and correct obvious nonsense against the screenshot.
 Render a confirmation page through the bundled CLI:
 
 ```bash
-python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.json" --output "<OUTPUT_DIR>/board-{N}.html" --title "Board confirmation" --subtitle "Round {N}"
+python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.json" --tile-audit "<OUTPUT_DIR>/tile-audit-{N}.png" --output "<OUTPUT_DIR>/board-{N}.html" --title "Board confirmation" --subtitle "Round {N}"
 ```
 
-Present `board-{N}.html`, `overlay-{N}.png`, and `tile-audit-{N}.png`. State the
-blank coordinates you marked, including when the list is empty, and ask the
-user to confirm both the letters and all score-0 blank tiles. Wait for explicit
-confirmation or corrections. This checkpoint is intentionally before the solve
-because a single bad tile can invalidate every recommendation. Apply
+Present `board-{N}.html`, which turns `tile-audit-{N}.png` into responsive,
+theme-aware verification cards beneath the board. The cards reflow for phone
+and desktop widths while preserving the full-tile and enlarged-score evidence.
+Each occupied board cell links to its audit card, and each card returns to and
+highlights that board cell. The summary controls filter the cards to all tiles,
+blanks, or detector/transcription mismatches.
+State the blank coordinates you marked, including when the list is empty, and
+ask the user to confirm both the letters and all score-0 blank tiles. Wait for
+explicit confirmation or corrections. This checkpoint is intentionally before
+the solve because a single bad tile can invalidate every recommendation. Apply
 corrections to `board.json`, regenerate the audit and page, and repeat the
 confirmation before continuing.
 
@@ -241,7 +246,10 @@ python "<SKILL_DIR>/scripts/moves_template.py" moves --board "<WORK_DIR>/board.j
 ```
 
 Present `moves-{N}.html` with a concise text summary of the best move and any
-important caveat.
+important caveat. Board-confirmation and move pages have `Copy SVG` and
+`Copy PNG` controls for sharing each board; browser clipboard permission is
+required. Use `--no-script` only when the destination forbids JavaScript; it
+also omits the copy controls.
 
 ## Report a problem
 

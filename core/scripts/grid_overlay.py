@@ -4,12 +4,40 @@ Crossplay grid overlay tool.
 Detects the board region, highlights tile cells, and builds a tile audit sheet.
 """
 
+import json
+import struct
+import zlib
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from solver import TILE_PTS, load_board_json
+
+
+SCORE_CROP_WIDTH_RATIO = 0.35
+SCORE_CROP_HEIGHT_RATIO = 0.45
+YELLOW_HIGHLIGHT_LOWER = np.array([10, 25, 60])
+YELLOW_HIGHLIGHT_UPPER = np.array([55, 255, 255])
+AUDIT_METADATA_KEY = "crossplay-audit"
+AUDIT_PAGE_HEADER_HEIGHT = 64
+AUDIT_CARD_WIDTH = 268
+AUDIT_CARD_HEIGHT = 202
+AUDIT_IMAGE_SIZE = 120
+AUDIT_IMAGE_TOP = 72
+AUDIT_WHOLE_LEFT = 8
+AUDIT_SCORE_LEFT = 140
+
+
+def remove_yellow_highlight(image):
+    """Inpaint the yellow last-move outline in a tile image."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv, YELLOW_HIGHLIGHT_LOWER, YELLOW_HIGHLIGHT_UPPER
+    )
+    if cv2.countNonZero(mask) == 0:
+        return image
+    return cv2.inpaint(image, mask, 2, cv2.INPAINT_TELEA)
 
 
 def find_premium_clusters(profile, min_sat=20, min_gap=5):
@@ -367,9 +395,9 @@ def draw_tile_audit(
         detected_tiles, board, blanks, grid_size
     )
 
-    page_header_h = 64
-    card_w = 268
-    card_h = 202
+    page_header_h = AUDIT_PAGE_HEADER_HEIGHT
+    card_w = AUDIT_CARD_WIDTH
+    card_h = AUDIT_CARD_HEIGHT
     rows = max(1, (len(entries) + columns - 1) // columns)
     sheet = np.full(
         (page_header_h + rows * card_h, columns * card_w, 3),
@@ -415,7 +443,7 @@ def draw_tile_audit(
     cell_w = bw / grid_size
     cell_h = bh / grid_size
     image_h, image_w = image.shape[:2]
-    image_size = 120
+    image_size = AUDIT_IMAGE_SIZE
 
     for index, entry in enumerate(entries):
         card_row, card_col = divmod(index, columns)
@@ -498,28 +526,34 @@ def draw_tile_audit(
             )
             continue
 
+        clean_cell = remove_yellow_highlight(cell)
         whole = cv2.resize(
-            cell, (image_size, image_size), interpolation=cv2.INTER_CUBIC
+            clean_cell,
+            (image_size, image_size),
+            interpolation=cv2.INTER_CUBIC,
         )
-        score_y2 = max(1, int(cell.shape[0] * 0.55))
+        score_y2 = max(
+            1, int(cell.shape[0] * SCORE_CROP_HEIGHT_RATIO)
+        )
         score_x1 = min(
-            cell.shape[1] - 1, int(cell.shape[1] * 0.45)
+            cell.shape[1] - 1,
+            int(cell.shape[1] * (1.0 - SCORE_CROP_WIDTH_RATIO)),
         )
-        score_crop = cell[:score_y2, score_x1:]
+        score_crop = clean_cell[:score_y2, score_x1:]
         score = cv2.resize(
             score_crop,
             (image_size, image_size),
             interpolation=cv2.INTER_CUBIC,
         )
 
-        image_y = y + 72
+        image_y = y + AUDIT_IMAGE_TOP
         sheet[
             image_y:image_y + image_size,
-            x + 8:x + 8 + image_size,
+            x + AUDIT_WHOLE_LEFT:x + AUDIT_WHOLE_LEFT + image_size,
         ] = whole
         sheet[
             image_y:image_y + image_size,
-            x + 140:x + 140 + image_size,
+            x + AUDIT_SCORE_LEFT:x + AUDIT_SCORE_LEFT + image_size,
         ] = score
 
     return sheet, entries
@@ -574,18 +608,99 @@ def draw_grid_overlay(image, bx, by, bw, bh, tiles, grid_size=15):
     return out
 
 
-def write_image(path, image):
-    """Write an image, creating parent directories and surfacing failures."""
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    extension = output_path.suffix.lower() or ".png"
+def _encode_image(extension, image):
     try:
         encoded_ok, encoded = cv2.imencode(extension, image)
     except cv2.error as exc:
         raise OSError(f"Could not encode image as {extension}") from exc
     if not encoded_ok:
-        raise OSError(f"Could not write image: {output_path}")
-    output_path.write_bytes(encoded.tobytes())
+        raise OSError(f"Could not encode image as {extension}")
+    return encoded.tobytes()
+
+
+def write_image(path, image):
+    """Write an image, creating parent directories and surfacing failures."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    extension = output_path.suffix.lower() or ".png"
+    output_path.write_bytes(_encode_image(extension, image))
+
+
+def _png_chunk(chunk_type, data):
+    checksum = zlib.crc32(chunk_type + data) & 0xffffffff
+    return (
+        struct.pack(">I", len(data))
+        + chunk_type
+        + data
+        + struct.pack(">I", checksum)
+    )
+
+
+def _add_png_text(png_bytes, keyword, value):
+    signature = b"\x89PNG\r\n\x1a\n"
+    if not png_bytes.startswith(signature) or png_bytes[12:16] != b"IHDR":
+        raise OSError("Could not add tile-audit metadata to invalid PNG")
+    keyword_bytes = keyword.encode("ascii")
+    if not keyword_bytes or len(keyword_bytes) > 79 or b"\0" in keyword_bytes:
+        raise ValueError("PNG metadata keyword must contain 1-79 ASCII bytes")
+    text_data = keyword_bytes + b"\0" + value.encode("latin-1")
+    ihdr_length = struct.unpack(">I", png_bytes[8:12])[0]
+    insert_at = 8 + 12 + ihdr_length
+    return (
+        png_bytes[:insert_at]
+        + _png_chunk(b"tEXt", text_data)
+        + png_bytes[insert_at:]
+    )
+
+
+def write_tile_audit(path, image, entries, columns=None):
+    """Write an audit PNG with layout metadata for responsive HTML cards."""
+    output_path = Path(path)
+    if output_path.suffix.lower() not in ("", ".png"):
+        raise OSError("Tile audit output must use a .png extension")
+    if image.shape[1] % AUDIT_CARD_WIDTH != 0:
+        raise ValueError("Tile audit sheet width does not match card layout")
+    derived_columns = image.shape[1] // AUDIT_CARD_WIDTH
+    if columns is None:
+        columns = derived_columns
+    elif type(columns) is not int or columns <= 0:
+        raise ValueError("Tile audit column count must be a positive integer")
+    elif columns != derived_columns:
+        raise ValueError("Tile audit column count does not match sheet width")
+    rows = max(1, (len(entries) + columns - 1) // columns)
+    expected_height = AUDIT_PAGE_HEADER_HEIGHT + rows * AUDIT_CARD_HEIGHT
+    if image.shape[0] != expected_height:
+        raise ValueError("Tile audit sheet height does not match its entries")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "version": 1,
+        "detection_known": True,
+        "sheet": {
+            "width": int(image.shape[1]),
+            "height": int(image.shape[0]),
+        },
+        "layout": {
+            "columns": int(columns),
+            "page_header_height": AUDIT_PAGE_HEADER_HEIGHT,
+            "card_width": AUDIT_CARD_WIDTH,
+            "card_height": AUDIT_CARD_HEIGHT,
+            "image_size": AUDIT_IMAGE_SIZE,
+            "image_top": AUDIT_IMAGE_TOP,
+            "whole_left": AUDIT_WHOLE_LEFT,
+            "score_left": AUDIT_SCORE_LEFT,
+        },
+        "entries": entries,
+    }
+    manifest_json = json.dumps(
+        manifest,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    png_bytes = _encode_image(".png", image)
+    output_path.write_bytes(
+        _add_png_text(png_bytes, AUDIT_METADATA_KEY, manifest_json)
+    )
 
 
 def read_image(path):
@@ -653,7 +768,7 @@ def main():
             image, bx, by, bw, bh, tiles, board, blanks
         )
         try:
-            write_image(args.tile_audit, audit)
+            write_tile_audit(args.tile_audit, audit, entries)
         except OSError as exc:
             parser.error(str(exc))
         mismatches = sum(
