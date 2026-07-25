@@ -162,7 +162,10 @@ CSS = """<style>
 """ + _DARK_THEME_VARS_BLOCK + """
 
 html{background:var(--bg)}
-body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(--bg);color:var(--text)}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+/* Paint our own surface: an embedded viewer may inject this fragment into a
+   host document whose own background would otherwise show through. */
+.page{padding:16px;background:var(--bg);color:var(--text);min-height:100vh}
 .move-section{margin-bottom:32px}
 .move-header{font-size:18px;margin-bottom:8px;padding:8px 0;border-bottom:2px solid var(--divider);color:var(--text)}
 .move-info{display:flex;gap:8px 18px;flex-wrap:wrap;font-size:13px;color:var(--text-sec);margin-top:6px}
@@ -244,7 +247,7 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .tile-audit-image-wrap{padding:12px;border:1px solid var(--surface-border);border-top:0;border-radius:0 0 12px 12px;background:var(--surface-subtle);overflow:auto}
 .tile-audit-image{display:block;max-width:100%;height:auto;margin:auto;border:1px solid var(--surface-border);border-radius:8px;background:#fff}
 @media (max-width:620px){
-  body{padding:12px}
+  .page{padding:12px}
   .audit-section-header{display:block;padding:14px}
   .audit-heading{min-width:0}
   .audit-summary{justify-content:flex-start;margin-top:12px}
@@ -1044,7 +1047,42 @@ THEME_ICONS = {
 }
 
 
-def _legend_prem_html():
+def _occupied_coordinates(*tile_maps):
+    """Collect board coordinates covered by any of the given tile maps."""
+    occupied = set()
+    for tiles in tile_maps:
+        for key in tiles:
+            row, col = (int(part) for part in key.split(","))
+            occupied.add((row, col))
+    return occupied
+
+
+def _visible_premium_types(premium, occupied):
+    """Premium codes still visible, since tiles and the star hide the rest."""
+    return {
+        code
+        for (row, col), code in premium.items()
+        if (row, col) not in occupied and (row, col) != (7, 7)
+    }
+
+
+def _has_blank(*tile_maps):
+    return any(
+        isinstance(raw, str) and raw.islower()
+        for tiles in tile_maps
+        for raw in tiles.values()
+    )
+
+
+def _legend_html(entries):
+    """Render a legend, omitting anything the rendered boards do not show."""
+    if not entries:
+        return ""
+    body = "\n  ".join(entries)
+    return f'<div class="legend">\n  {body}\n</div>'
+
+
+def _legend_prem_html(visible=None):
     """Render premium legend swatches from the shared theme color tables."""
     labels = (
         ("3W", "Triple Word"),
@@ -1054,6 +1092,8 @@ def _legend_prem_html():
     )
     entries = []
     for prem_type, label in labels:
+        if visible is not None and prem_type not in visible:
+            continue
         bg_l, fg_l = PREM_COLORS_LIGHT[prem_type]
         bg_d, fg_d = PREM_COLORS_DARK[prem_type]
         entries.append(
@@ -1062,7 +1102,7 @@ def _legend_prem_html():
             f'--prem-dark-bg:{bg_d};--prem-dark-fg:{fg_d}">{prem_type}</span> '
             f"{label}</div>"
         )
-    return "\n  ".join(entries)
+    return entries
 
 
 def _theme_actions_html():
@@ -1858,6 +1898,7 @@ def generate_board_confirm_html(
         parts.append(THEME_SCRIPT)
         parts.append(BOARD_COPY_SCRIPT)
         parts.append(AUDIT_SCRIPT)
+    parts.append('<div class="page">')
     parts.append(f'<h1>{escape(str(title))}</h1>')
     if subtitle:
         parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
@@ -1887,14 +1928,32 @@ def generate_board_confirm_html(
                 )
             )
     parts.append('</div></div>')
-    parts.append("""<div class="legend">
-  <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Tile</div>
-  <div class="leg"><span class="leg-box blank-swatch"><span class="blank-swatch-mark">B</span>0</span> Blank (0 points)</div>
-  <div class="leg"><span class="leg-box alert-swatch"><span class="alert-swatch-mark">!</span></span> Needs review</div>
-  """ + _legend_prem_html() + """
-</div>""")
+    occupied = _occupied_coordinates(board)
+    legend_entries = []
+    if board:
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box" '
+            'style="background:var(--tile)"></span> Tile</div>'
+        )
+    if _has_blank(board):
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box blank-swatch">'
+            '<span class="blank-swatch-mark">B</span>0</span> '
+            'Blank (0 points)</div>'
+        )
+    if audit_alerts:
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box alert-swatch">'
+            '<span class="alert-swatch-mark">!</span></span> '
+            'Needs review</div>'
+        )
+    legend_entries.extend(
+        _legend_prem_html(_visible_premium_types(premium, occupied))
+    )
+    parts.append(_legend_html(legend_entries))
     if audit_html is not None:
         parts.append(audit_html)
+    parts.append('</div>')
     _write_html(parts, output_path, "Board confirmation written to")
 
 
@@ -1910,18 +1969,41 @@ def generate_moves_html(
         parts.append(THEME_SCRIPT)
         parts.append(BOARD_COPY_SCRIPT)
 
+    parts.append('<div class="page">')
     parts.append(f'<h1>{escape(str(title))}</h1>')
     parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
     if include_scripts:
         parts.append(
             f'<div class="board-toolbar">{_theme_actions_html()}</div>'
         )
-    parts.append("""<div class="legend">
-  <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Existing</div>
-  <div class="leg"><span class="leg-box" style="background:var(--new-tile);box-shadow:inset 0 0 0 2px var(--new-border)"></span> Play here</div>
-  <div class="leg"><span class="leg-box blank-swatch">B0</span> Blank (0 points)</div>
-  """ + _legend_prem_html() + """
-</div>""")
+    move_tiles = [move["tiles"] for move in moves]
+    legend_entries = []
+    if board:
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box" '
+            'style="background:var(--tile)"></span> Existing</div>'
+        )
+    if any(move_tiles):
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box" '
+            'style="background:var(--new-tile);'
+            'box-shadow:inset 0 0 0 2px var(--new-border)"></span> '
+            'Play here</div>'
+        )
+    if _has_blank(board, *move_tiles):
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box blank-swatch">B0</span> '
+            'Blank (0 points)</div>'
+        )
+    # A premium stays in the legend while any rendered move board still shows it.
+    visible_premiums = set()
+    for tiles in move_tiles:
+        visible_premiums |= _visible_premium_types(
+            premium,
+            _occupied_coordinates(board, tiles),
+        )
+    legend_entries.extend(_legend_prem_html(visible_premiums))
+    parts.append(_legend_html(legend_entries))
 
     for i, move in enumerate(moves):
         parts.append('<div class="move-section" data-board-export>')
@@ -1962,6 +2044,7 @@ def generate_moves_html(
         parts.append(f'<div class="move-note">{note}</div>')
         parts.append('</div>')
 
+    parts.append('</div>')
     _write_html(parts, output_path, f"Written {len(moves)} moves to")
 
 
