@@ -207,7 +207,9 @@ python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.j
 
 Present `board-{N}.html` only. It already embeds `tile-audit-{N}.png` as
 responsive, theme-aware verification cards beneath the board, so never attach or
-display the audit PNG separately at this step. The cards reflow for phone
+display the audit PNG separately at this step. A red `!` in a board tile's top
+left corner marks a letter or score review, matching the yellow `B` that marks a
+blank. The cards reflow for phone
 and desktop widths while preserving the full-tile and enlarged-score evidence.
 Each occupied board cell links to its audit card, and each card returns to and
 highlights that board cell. The summary controls filter the cards to all tiles,

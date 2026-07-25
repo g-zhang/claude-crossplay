@@ -98,7 +98,9 @@ highlighting. Board rasterization prefers a `blob:` URL and falls back to a
 PNG flavor because document editors ignore the SVG flavor and would otherwise
 paste raw markup. When a viewer blocks the Clipboard API by permissions policy,
 the page removes its copy controls on load rather than showing buttons that can
-only fail; the board and audit cards still render.
+only fail; the board and audit cards still render. Pages declare `color-scheme`
+and paint the root background so an embedded viewer honors a forced light theme
+on a dark system instead of keeping its own dark canvas.
 
 ## Troubleshooting
 

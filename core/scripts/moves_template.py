@@ -62,7 +62,8 @@ _DARK_THEME_VARS = """  --bg: #1a1a1a;
   --new-tile-blank: #e09a3d;
   --new-border: #b86a15;
   --blank-border: #85b7eb;
-  --blank-mark: #ffdc62;
+  --blank-mark: #ffe0bd;
+  --alert-mark: #f04438;
   --cell-hover: #dceeff;
   --board-highlight: #ffdc62;
   --blank-audit-bg: #3b3218;
@@ -94,18 +95,31 @@ _DARK_THEME_VARS_BLOCK = (
 )
 
 
-def _dark_theme_rule(body):
+def _dark_theme_rule(selectors, declarations):
     """Apply a dark-mode rule for both automatic and forced dark themes."""
+    targets = [selector.strip() for selector in selectors.split(",")]
+    automatic = ",".join(
+        f':root:not([data-theme="light"]) {target}' for target in targets
+    )
+    forced = ",".join(
+        f':root[data-theme="dark"] {target}' for target in targets
+    )
     return (
         "@media (prefers-color-scheme:dark){"
-        f':root:not([data-theme="light"]) {body}'
+        f"{automatic}{declarations}"
         "}\n"
-        f':root[data-theme="dark"] {body}'
+        f"{forced}{declarations}"
     )
 
 
 CSS = """<style>
 *{box-sizing:border-box;margin:0;padding:0}
+
+/* Tell the user agent which scheme is live so it paints the canvas, form
+   controls, and scrollbars to match, even inside an embedded viewer. */
+:root{color-scheme:light dark}
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
 
 :root {
   --bg: #fafafa;
@@ -125,9 +139,10 @@ CSS = """<style>
   --new-tile-blank: #F0A866;
   --new-border: #c47020;
   --blank-border: #4A90D9;
-  --blank-mark: #ffe066;
+  --blank-mark: #ffe4c4;
+  --alert-mark: #d92d20;
   --cell-hover: #185fa5;
-  --board-highlight: #ffe066;
+  --board-highlight: #e8a600;
   --blank-audit-bg: #fff4cc;
   --blank-audit-border: #c28a00;
   --star: #ccc;
@@ -146,6 +161,7 @@ CSS = """<style>
 }
 """ + _DARK_THEME_VARS_BLOCK + """
 
+html{background:var(--bg)}
 body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(--bg);color:var(--text)}
 .move-section{margin-bottom:32px}
 .move-header{font-size:18px;margin-bottom:8px;padding:8px 0;border-bottom:2px solid var(--divider);color:var(--text)}
@@ -157,6 +173,8 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell.hdr{background:var(--hdr-bg);font-size:10px;color:var(--hdr-text);font-weight:400;aspect-ratio:auto}
 .cell.tile{background:var(--tile);color:#fff;border-radius:2px}
 .cell.tile.blank{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border)}
+.cell.tile.alert{box-shadow:inset 0 0 0 1px var(--alert-mark)}
+.cell.tile.blank.alert{box-shadow:inset 0 0 0 1px var(--alert-mark),inset 0 0 0 2px var(--blank-border)}
 .cell.new{background:var(--new-tile);color:#fff;border-radius:2px;box-shadow:inset 0 0 0 2px var(--new-border)}
 .cell.new.blank{background:var(--new-tile-blank,#f0a866);box-shadow:inset 0 0 0 2px var(--blank-border)}
 .cell.star{background:var(--hdr-bg);font-size:13px;color:var(--star)}
@@ -164,16 +182,20 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell.prem{background:var(--prem-light-bg);color:var(--prem-light-fg);font-size:8px;font-weight:500}
 .pts{position:absolute;top:2px;right:2px;font-size:8px;line-height:1;opacity:.9;font-weight:650}
 .blank-mark{position:absolute;bottom:2px;left:2px;font-size:7px;line-height:1;font-weight:800;color:var(--blank-mark)}
+.alert-mark{position:absolute;top:2px;left:2px;font-size:8px;line-height:1;font-weight:800;color:var(--alert-mark)}
 .cell.audit-link{cursor:pointer;text-decoration:none}
 button.cell{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;line-height:inherit;text-align:center}
 .cell.audit-link:hover,.cell.audit-link:focus-visible{z-index:1;outline:2px solid var(--cell-hover);outline-offset:-2px}
-.cell.audit-link:target,.cell.audit-link.is-active{z-index:2;outline:3px solid var(--board-highlight);outline-offset:-3px}
+.cell.audit-link:target,.cell.audit-link.is-active{z-index:2;outline:3px solid var(--board-highlight);outline-offset:-2px}
 .blank-audit{max-width:540px;margin:0 0 12px;padding:10px 12px;border:2px solid var(--blank-audit-border);border-radius:6px;background:var(--blank-audit-bg);font-size:13px;line-height:1.45}
 .blank-swatch{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border);color:#fff;font-size:7px;font-weight:650;text-align:center;line-height:16px}
 .blank-swatch-mark{color:var(--blank-mark);font-weight:800}
+.alert-swatch{background:var(--tile);box-shadow:inset 0 0 0 1px var(--alert-mark);text-align:center;line-height:16px}
+.alert-swatch-mark{color:var(--alert-mark);font-size:8px;font-weight:800}
 .legend{display:flex;gap:16px;margin:12px 0 24px;font-size:12px;color:var(--text-sec);flex-wrap:wrap}
 .leg{display:flex;align-items:center;gap:4px}
 .leg-box{width:16px;height:16px;border-radius:3px;display:inline-block}
+.prem-swatch{display:flex;align-items:center;justify-content:center;border:1px solid var(--grid-border);background:var(--prem-light-bg);color:var(--prem-light-fg);font-size:8px}
 h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .subtitle{font-size:14px;color:var(--text-sec);margin-bottom:16px}
 .tile-audit-panel{max-width:540px;margin:28px 0 8px}
@@ -229,7 +251,8 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
   .audit-grid{grid-template-columns:1fr;padding:10px}
 }
 """ + _dark_theme_rule(
-    ".cell.prem{background:var(--prem-dark-bg);color:var(--prem-dark-fg)}"
+    ".cell.prem,.prem-swatch",
+    "{background:var(--prem-dark-bg);color:var(--prem-dark-fg)}",
 ) + """
 </style>"""
 
@@ -252,7 +275,7 @@ COPY_CSS = """<style>
 .copy-btn:disabled{cursor:wait;opacity:.6}
 .copy-status{color:var(--text-sec);font-size:11px;font-weight:400}
 .copy-status.error{color:#b42318}
-""" + _dark_theme_rule(".copy-status.error{color:#ff9b8f}") + """
+""" + _dark_theme_rule(".copy-status.error", "{color:#ff9b8f}") + """
 @media print{.copy-actions,.theme-actions{display:none}}
 </style>"""
 
@@ -855,7 +878,7 @@ def prem_cell_html(prem_type):
 
 def _tile_cell_html(
         r, c, raw, cell_class, link_to_audit=False,
-        show_blank_mark=True, include_scripts=True):
+        show_blank_mark=True, include_scripts=True, needs_review=False):
     letter = raw.upper()
     is_blank = raw.islower()
     pts = 0 if is_blank else TILE_PTS.get(letter, 0)
@@ -864,13 +887,22 @@ def _tile_cell_html(
         if is_blank and show_blank_mark
         else ""
     )
+    alert_mark = (
+        '<span class="alert-mark" aria-hidden="true">!</span>'
+        if needs_review
+        else ""
+    )
     tag = "div"
     attributes = f'class="{cell_class}"'
+    if needs_review:
+        cell_class = f"{cell_class} alert"
+        attributes = f'class="{cell_class}"'
     if link_to_audit:
         kind = "blank tile" if is_blank else "tile"
+        review = " needing review" if needs_review else ""
         label = (
             f'aria-label="View source audit for {kind} '
-            f'{escape(letter)} at row {r}, column {c}"'
+            f'{escape(letter)} at row {r}, column {c}{review}"'
         )
         if include_scripts:
             # A button keeps the jump in-document, so embedded viewers do not
@@ -888,14 +920,14 @@ def _tile_cell_html(
                 f'href="#audit-{r}-{c}" {label}'
             )
     return (
-        f"<{tag} {attributes}>{blank_mark}{escape(letter)}"
+        f"<{tag} {attributes}>{alert_mark}{blank_mark}{escape(letter)}"
         f'<span class="pts">{pts}</span></{tag}>'
     )
 
 
 def cell_html(
         r, c, board, new_tiles, premium, audit_targets=None,
-        show_blank_mark=True, include_scripts=True):
+        show_blank_mark=True, include_scripts=True, audit_alerts=None):
     key = f"{r},{c}"
     if key in new_tiles:
         raw = new_tiles[key]
@@ -922,6 +954,9 @@ def cell_html(
             ),
             show_blank_mark=show_blank_mark,
             include_scripts=include_scripts,
+            needs_review=(
+                audit_alerts is not None and (r, c) in audit_alerts
+            ),
         )
     else:
         prem = premium.get((r, c))
@@ -1007,6 +1042,27 @@ THEME_ICONS = {
         'a8.7 8.7 0 1 0 11.7 11.7Z"/></svg>'
     ),
 }
+
+
+def _legend_prem_html():
+    """Render premium legend swatches from the shared theme color tables."""
+    labels = (
+        ("3W", "Triple Word"),
+        ("2W", "Double Word"),
+        ("3L", "Triple Letter"),
+        ("2L", "Double Letter"),
+    )
+    entries = []
+    for prem_type, label in labels:
+        bg_l, fg_l = PREM_COLORS_LIGHT[prem_type]
+        bg_d, fg_d = PREM_COLORS_DARK[prem_type]
+        entries.append(
+            '<div class="leg"><span class="leg-box prem-swatch" '
+            f'style="--prem-light-bg:{bg_l};--prem-light-fg:{fg_l};'
+            f'--prem-dark-bg:{bg_d};--prem-dark-fg:{fg_d}">{prem_type}</span> '
+            f"{label}</div>"
+        )
+    return "\n  ".join(entries)
 
 
 def _theme_actions_html():
@@ -1730,6 +1786,15 @@ def _tile_audit_content(image_path, board, include_scripts=True):
                 for entry in manifest["entries"]
                 if entry["transcribed"]
             }
+            alerts = {
+                (entry["row"], entry["col"])
+                for entry in manifest["entries"]
+                if entry["transcribed"]
+                and "review" in (
+                    entry.get("letter_check"),
+                    entry.get("score_check"),
+                )
+            }
             return (
                 _responsive_tile_audit_html(
                     encoded,
@@ -1737,6 +1802,7 @@ def _tile_audit_content(image_path, board, include_scripts=True):
                     include_scripts=include_scripts,
                 ),
                 targets,
+                alerts,
             )
 
     return (
@@ -1752,11 +1818,12 @@ def _tile_audit_content(image_path, board, include_scripts=True):
         'alt="Source tiles and enlarged score corners for board verification">'
         "</div></section>",
         set(),
+        set(),
     )
 
 
 def _tile_audit_html(image_path, board, include_scripts=True):
-    html, _ = _tile_audit_content(
+    html, _, _ = _tile_audit_content(
         image_path,
         board,
         include_scripts=include_scripts,
@@ -1779,8 +1846,9 @@ def generate_board_confirm_html(
     premium = _norm_premium(premium)
     audit_html = None
     audit_targets = set()
+    audit_alerts = set()
     if tile_audit_path is not None:
-        audit_html, audit_targets = _tile_audit_content(
+        audit_html, audit_targets, audit_alerts = _tile_audit_content(
             tile_audit_path,
             board,
             include_scripts=include_scripts,
@@ -1815,16 +1883,15 @@ def generate_board_confirm_html(
                     premium,
                     audit_targets=audit_targets,
                     include_scripts=include_scripts,
+                    audit_alerts=audit_alerts,
                 )
             )
     parts.append('</div></div>')
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Tile</div>
   <div class="leg"><span class="leg-box blank-swatch"><span class="blank-swatch-mark">B</span>0</span> Blank (0 points)</div>
-  <div class="leg"><span class="leg-box" style="background:#FAECE7;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993C1D">3W</span> Triple Word</div>
-  <div class="leg"><span class="leg-box" style="background:#FBEAF0;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993556">2W</span> Double Word</div>
-  <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>
-  <div class="leg"><span class="leg-box" style="background:#EAF3DE;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#3B6D11">2L</span> Double Letter</div>
+  <div class="leg"><span class="leg-box alert-swatch"><span class="alert-swatch-mark">!</span></span> Needs review</div>
+  """ + _legend_prem_html() + """
 </div>""")
     if audit_html is not None:
         parts.append(audit_html)
@@ -1853,10 +1920,7 @@ def generate_moves_html(
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Existing</div>
   <div class="leg"><span class="leg-box" style="background:var(--new-tile);box-shadow:inset 0 0 0 2px var(--new-border)"></span> Play here</div>
   <div class="leg"><span class="leg-box blank-swatch">B0</span> Blank (0 points)</div>
-  <div class="leg"><span class="leg-box" style="background:#FAECE7;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993C1D">3W</span> Triple Word</div>
-  <div class="leg"><span class="leg-box" style="background:#FBEAF0;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993556">2W</span> Double Word</div>
-  <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>
-  <div class="leg"><span class="leg-box" style="background:#EAF3DE;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#3B6D11">2L</span> Double Letter</div>
+  """ + _legend_prem_html() + """
 </div>""")
 
     for i, move in enumerate(moves):
