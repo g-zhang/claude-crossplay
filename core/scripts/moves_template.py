@@ -45,6 +45,65 @@ LEGACY_AUDIT_LAYOUT = {
     "score_left": 140,
 }
 
+_DARK_THEME_VARS = """  --bg: #1a1a1a;
+  --text: #e0e0e0;
+  --text-sec: #aaa;
+  --text-note: #ccc;
+  --note-bg: #2a2d30;
+  --grid-border: #555;
+  --grid-bg: #333;
+  --cell-bg: #222;
+  --hdr-bg: #2a2a2a;
+  --hdr-text: #888;
+  --divider: #5a9fd4;
+  --tile: #3d7ec0;
+  --tile-blank: #5590c8;
+  --new-tile: #d4801f;
+  --new-tile-blank: #e09a3d;
+  --new-border: #b86a15;
+  --blank-border: #85b7eb;
+  --blank-mark: #ffdc62;
+  --cell-hover: #dceeff;
+  --board-highlight: #ffdc62;
+  --blank-audit-bg: #3b3218;
+  --blank-audit-border: #d8ad34;
+  --star: #555;
+  --surface: #242629;
+  --surface-subtle: #1f2124;
+  --surface-border: #454a50;
+  --surface-shadow: 0 1px 2px rgba(0,0,0,.3);
+  --audit-accent: #85b7eb;
+  --audit-accent-bg: #102f4c;
+  --audit-blank: #ffdc62;
+  --audit-blank-bg: #3b3218;
+  --audit-alert: #ff9b8f;
+  --audit-alert-bg: #421f1c;
+  --audit-ok: #a8d893;
+  --audit-ok-bg: #20351c;"""
+
+# Dark values apply on a dark system unless the reader forced light, and
+# always when the reader forced dark.
+_DARK_THEME_VARS_BLOCK = (
+    "@media (prefers-color-scheme: dark) {\n"
+    '  :root:not([data-theme="light"]) {\n'
+    + _DARK_THEME_VARS
+    + "\n  }\n}\n\n"
+    ':root[data-theme="dark"] {\n'
+    + _DARK_THEME_VARS
+    + "\n}\n"
+)
+
+
+def _dark_theme_rule(body):
+    """Apply a dark-mode rule for both automatic and forced dark themes."""
+    return (
+        "@media (prefers-color-scheme:dark){"
+        f':root:not([data-theme="light"]) {body}'
+        "}\n"
+        f':root[data-theme="dark"] {body}'
+    )
+
+
 CSS = """<style>
 *{box-sizing:border-box;margin:0;padding:0}
 
@@ -65,7 +124,10 @@ CSS = """<style>
   --new-tile: #E8913A;
   --new-tile-blank: #F0A866;
   --new-border: #c47020;
-  --blank-border: #ffe066;
+  --blank-border: #4A90D9;
+  --blank-mark: #ffe066;
+  --cell-hover: #185fa5;
+  --board-highlight: #ffe066;
   --blank-audit-bg: #fff4cc;
   --blank-audit-border: #c28a00;
   --star: #ccc;
@@ -82,43 +144,7 @@ CSS = """<style>
   --audit-ok: #276719;
   --audit-ok-bg: #edf8e8;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1a1a;
-    --text: #e0e0e0;
-    --text-sec: #aaa;
-    --text-note: #ccc;
-    --note-bg: #2a2d30;
-    --grid-border: #555;
-    --grid-bg: #333;
-    --cell-bg: #222;
-    --hdr-bg: #2a2a2a;
-    --hdr-text: #888;
-    --divider: #5a9fd4;
-    --tile: #3d7ec0;
-    --tile-blank: #5590c8;
-    --new-tile: #d4801f;
-    --new-tile-blank: #e09a3d;
-    --new-border: #b86a15;
-    --blank-border: #ffdc62;
-    --blank-audit-bg: #3b3218;
-    --blank-audit-border: #d8ad34;
-    --star: #555;
-    --surface: #242629;
-    --surface-subtle: #1f2124;
-    --surface-border: #454a50;
-    --surface-shadow: 0 1px 2px rgba(0,0,0,.3);
-    --audit-accent: #85b7eb;
-    --audit-accent-bg: #102f4c;
-    --audit-blank: #ffdc62;
-    --audit-blank-bg: #3b3218;
-    --audit-alert: #ff9b8f;
-    --audit-alert-bg: #421f1c;
-    --audit-ok: #a8d893;
-    --audit-ok-bg: #20351c;
-  }
-}
+""" + _DARK_THEME_VARS_BLOCK + """
 
 body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(--bg);color:var(--text)}
 .move-section{margin-bottom:32px}
@@ -137,14 +163,14 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell.empty{background:var(--cell-bg)}
 .cell.prem{background:var(--prem-light-bg);color:var(--prem-light-fg);font-size:8px;font-weight:500}
 .pts{position:absolute;top:2px;right:2px;font-size:8px;line-height:1;opacity:.9;font-weight:650}
-.cell.blank .pts{font-size:9px;opacity:1;font-weight:800;color:#fff}
-.blank-mark{position:absolute;bottom:2px;left:2px;font-size:7px;line-height:1;font-weight:800;color:var(--blank-border)}
+.blank-mark{position:absolute;bottom:2px;left:2px;font-size:7px;line-height:1;font-weight:800;color:var(--blank-mark)}
 .cell.audit-link{cursor:pointer;text-decoration:none}
 button.cell{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;line-height:inherit;text-align:center}
-.cell.audit-link:hover,.cell.audit-link:focus-visible{z-index:1;outline:2px solid var(--divider);outline-offset:-2px}
-.cell.audit-link:target,.cell.audit-link.is-active{z-index:2;outline:3px solid var(--audit-accent);outline-offset:-3px}
+.cell.audit-link:hover,.cell.audit-link:focus-visible{z-index:1;outline:2px solid var(--cell-hover);outline-offset:-2px}
+.cell.audit-link:target,.cell.audit-link.is-active{z-index:2;outline:3px solid var(--board-highlight);outline-offset:-3px}
 .blank-audit{max-width:540px;margin:0 0 12px;padding:10px 12px;border:2px solid var(--blank-audit-border);border-radius:6px;background:var(--blank-audit-bg);font-size:13px;line-height:1.45}
-.blank-swatch{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border);color:#fff;font-size:7px;font-weight:800;text-align:center;line-height:16px}
+.blank-swatch{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border);color:#fff;font-size:7px;font-weight:650;text-align:center;line-height:16px}
+.blank-swatch-mark{color:var(--blank-mark);font-weight:800}
 .legend{display:flex;gap:16px;margin:12px 0 24px;font-size:12px;color:var(--text-sec);flex-wrap:wrap}
 .leg{display:flex;align-items:center;gap:4px}
 .leg-box{width:16px;height:16px;border-radius:3px;display:inline-block}
@@ -202,20 +228,32 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
   .audit-summary{justify-content:flex-start;margin-top:12px}
   .audit-grid{grid-template-columns:1fr;padding:10px}
 }
-@media (prefers-color-scheme:dark){.cell.prem{background:var(--prem-dark-bg);color:var(--prem-dark-fg)}}
+""" + _dark_theme_rule(
+    ".cell.prem{background:var(--prem-dark-bg);color:var(--prem-dark-fg)}"
+) + """
 </style>"""
 
 COPY_CSS = """<style>
-.board-toolbar{display:flex;justify-content:flex-end;max-width:540px;margin-bottom:4px}
+.board-toolbar{display:flex;align-items:center;gap:8px;justify-content:flex-end;max-width:540px;margin-bottom:4px}
 .copy-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
+.theme-actions{position:relative;display:inline-flex;align-items:center;padding:2px;border:1px solid var(--grid-border);border-radius:999px;background:var(--hdr-bg);margin-right:auto}
+.theme-thumb{position:absolute;top:2px;left:2px;width:28px;height:22px;border-radius:999px;background:var(--surface);box-shadow:var(--surface-shadow);transition:transform .18s ease}
+.theme-actions[data-active="auto"] .theme-thumb{transform:translateX(28px)}
+.theme-actions[data-active="dark"] .theme-thumb{transform:translateX(56px)}
+.theme-btn{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;padding:0;border:0;border-radius:999px;background:none;color:var(--text-sec);cursor:pointer}
+.theme-btn:hover{color:var(--text)}
+.theme-btn[aria-pressed="true"]{color:var(--audit-accent)}
+.theme-btn:focus-visible{outline:2px solid var(--divider);outline-offset:2px}
+.theme-icon{display:block;width:14px;height:14px}
+@media (prefers-reduced-motion:reduce){.theme-thumb{transition:none}}
 .copy-btn{border:1px solid var(--grid-border);border-radius:4px;background:var(--hdr-bg);color:var(--text);padding:2px 6px;font:inherit;font-size:11px;cursor:pointer}
 .copy-btn:hover{border-color:var(--divider)}
 .copy-btn:focus-visible{outline:2px solid var(--divider);outline-offset:2px}
 .copy-btn:disabled{cursor:wait;opacity:.6}
 .copy-status{color:var(--text-sec);font-size:11px;font-weight:400}
 .copy-status.error{color:#b42318}
-@media (prefers-color-scheme:dark){.copy-status.error{color:#ff9b8f}}
-@media print{.copy-actions{display:none}}
+""" + _dark_theme_rule(".copy-status.error{color:#ff9b8f}") + """
+@media print{.copy-actions,.theme-actions{display:none}}
 </style>"""
 
 MOVES_RESULT_CSS = """<style>
@@ -225,7 +263,7 @@ MOVES_RESULT_CSS = """<style>
 .move-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .move-title{min-width:0}
 .move-section .cell.tile,.move-section .cell.new{cursor:default}
-.move-section .cell.tile:hover,.move-section .cell.new:hover{z-index:1;outline:2px solid var(--divider);outline-offset:-2px}
+.move-section .cell.tile:hover,.move-section .cell.new:hover{z-index:1;outline:2px solid var(--cell-hover);outline-offset:-2px}
 </style>"""
 
 PREM_COLORS_LIGHT = {
@@ -242,6 +280,74 @@ PREM_COLORS_DARK = {
     "3L": ("#042C53", "#85B7EB"),
     "2L": ("#173404", "#C0DD97"),
 }
+
+THEME_SCRIPT = r"""<script>
+const THEME_STORAGE_KEY = 'crossplay-theme';
+const THEME_CHOICES = ['auto', 'light', 'dark'];
+
+function storedTheme() {
+  try {
+    const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return THEME_CHOICES.includes(value) ? value : 'auto';
+  } catch (error) {
+    // Embedded viewers can block storage; fall back to the system theme.
+    return 'auto';
+  }
+}
+
+function rememberTheme(choice) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, choice);
+  } catch (error) {
+    // Ignore storage failures; the choice still applies to this page.
+  }
+}
+
+function applyTheme(choice) {
+  const root = document.documentElement;
+  if (choice === 'auto') {
+    root.removeAttribute('data-theme');
+  } else {
+    root.setAttribute('data-theme', choice);
+  }
+  document.querySelectorAll('.theme-btn[data-theme-choice]').forEach(button => {
+    button.setAttribute(
+      'aria-pressed',
+      String(button.dataset.themeChoice === choice)
+    );
+  });
+  document.querySelectorAll('.theme-actions').forEach(group => {
+    group.dataset.active = choice;
+  });
+}
+
+function initTheme() {
+  applyTheme(storedTheme());
+}
+
+document.addEventListener('click', event => {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+  const button = event.target.closest('.theme-btn[data-theme-choice]');
+  if (!button) {
+    return;
+  }
+  const choice = button.dataset.themeChoice;
+  if (!THEME_CHOICES.includes(choice)) {
+    throw new Error(`Unknown theme choice: ${choice}`);
+  }
+  applyTheme(choice);
+  rememberTheme(choice);
+});
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initTheme);
+} else {
+  initTheme();
+}
+</script>"""
+
 
 BOARD_COPY_SCRIPT = r"""<script>
 function legacyCopyText(text) {
@@ -476,6 +582,54 @@ async function boardPngBlob(board) {
   }
 }
 
+function clipboardPolicyBlocked() {
+  const policy = document.featurePolicy || document.permissionsPolicy;
+  if (policy && typeof policy.allowsFeature === 'function') {
+    try {
+      return !policy.allowsFeature('clipboard-write');
+    } catch (error) {
+      return false;
+    }
+  }
+  return false;
+}
+
+function clipboardCopyAvailable() {
+  if (!window.isSecureContext) {
+    return false;
+  }
+  if (clipboardPolicyBlocked()) {
+    return false;
+  }
+  return Boolean(
+    navigator.clipboard && navigator.clipboard.write && window.ClipboardItem
+  );
+}
+
+function disableCopyControls() {
+  document.querySelectorAll('.copy-actions').forEach(actions => {
+    const toolbar = actions.closest('.board-toolbar');
+    actions.remove();
+    if (toolbar && !toolbar.childElementCount) {
+      toolbar.remove();
+    }
+  });
+}
+
+function initCopyControls() {
+  // Embedded viewers can block the clipboard by permissions policy, so drop
+  // the controls instead of offering a button that can only fail.
+  if (!clipboardCopyAvailable()) {
+    disableCopyControls();
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initCopyControls);
+} else {
+  initCopyControls();
+}
+
 function copyErrorMessage(error) {
   if (!window.isSecureContext) {
     return 'Needs HTTPS or localhost';
@@ -534,6 +688,14 @@ async function handleBoardCopy(button) {
     }
   } catch (error) {
     console.error(error);
+    if (
+      error
+      && error.name === 'NotAllowedError'
+      && (clipboardPolicyBlocked() || !navigator.clipboard)
+    ) {
+      disableCopyControls();
+      return;
+    }
     showCopyStatus(button, copyErrorMessage(error), true);
   } finally {
     button.disabled = false;
@@ -820,6 +982,50 @@ def blank_audit_html(board):
         f"{status} This is not automatic verification. Compare every "
         "tile-audit score corner with this board: each displayed 0 must be "
         "lowercase in JSON, and each lowercase tile must display 0.</div>"
+    )
+
+
+THEME_ICONS = {
+    "light": (
+        '<svg class="theme-icon" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'aria-hidden="true"><circle cx="12" cy="12" r="4.2"/>'
+        '<path d="M12 2.2v2.1M12 19.7v2.1M4.1 4.1l1.5 1.5M18.4 18.4l1.5 1.5'
+        'M2.2 12h2.1M19.7 12h2.1M4.1 19.9l1.5-1.5M18.4 5.6l1.5-1.5"/></svg>'
+    ),
+    "auto": (
+        '<svg class="theme-icon" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="9"/>'
+        '<text x="12" y="16.6" text-anchor="middle" font-size="13" '
+        'font-weight="700" font-family="system-ui,sans-serif" '
+        'fill="currentColor" stroke="none">A</text></svg>'
+    ),
+    "dark": (
+        '<svg class="theme-icon" viewBox="0 0 24 24" fill="currentColor" '
+        'aria-hidden="true"><path d="M20.6 15.1A8.7 8.7 0 0 1 8.9 3.4'
+        'a8.7 8.7 0 1 0 11.7 11.7Z"/></svg>'
+    ),
+}
+
+
+def _theme_actions_html():
+    buttons = "".join(
+        f'<button type="button" class="theme-btn" '
+        f'data-theme-choice="{choice}" aria-pressed="'
+        f'{"true" if choice == "auto" else "false"}" '
+        f'aria-label="{label} theme" title="{label} theme">'
+        f'{THEME_ICONS[choice]}</button>'
+        for choice, label in (
+            ("light", "Light"),
+            ("auto", "Automatic"),
+            ("dark", "Dark"),
+        )
+    )
+    return (
+        '<span class="theme-actions" role="group" aria-label="Color theme" '
+        'data-active="auto"><span class="theme-thumb" aria-hidden="true">'
+        f'</span>{buttons}</span>'
     )
 
 
@@ -1581,6 +1787,7 @@ def generate_board_confirm_html(
         )
     parts = [CSS, COPY_CSS]
     if include_scripts:
+        parts.append(THEME_SCRIPT)
         parts.append(BOARD_COPY_SCRIPT)
         parts.append(AUDIT_SCRIPT)
     parts.append(f'<h1>{escape(str(title))}</h1>')
@@ -1589,7 +1796,10 @@ def generate_board_confirm_html(
     parts.append(blank_audit_html(board))
     parts.append('<div data-board-export>')
     if include_scripts:
-        parts.append(f'<div class="board-toolbar">{_copy_actions_html()}</div>')
+        parts.append(
+            '<div class="board-toolbar">'
+            f'{_theme_actions_html()}{_copy_actions_html()}</div>'
+        )
     parts.append('<div class="board"><div class="cell hdr"></div>')
     for c in range(15):
         parts.append(f'<div class="cell hdr">{c}</div>')
@@ -1610,7 +1820,7 @@ def generate_board_confirm_html(
     parts.append('</div></div>')
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Tile</div>
-  <div class="leg"><span class="leg-box blank-swatch">B0</span> Blank (0 points)</div>
+  <div class="leg"><span class="leg-box blank-swatch"><span class="blank-swatch-mark">B</span>0</span> Blank (0 points)</div>
   <div class="leg"><span class="leg-box" style="background:#FAECE7;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993C1D">3W</span> Triple Word</div>
   <div class="leg"><span class="leg-box" style="background:#FBEAF0;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#993556">2W</span> Double Word</div>
   <div class="leg"><span class="leg-box" style="background:#E6F1FB;border:1px solid #ddd;font-size:8px;display:flex;align-items:center;justify-content:center;color:#185FA5">3L</span> Triple Letter</div>
@@ -1630,10 +1840,15 @@ def generate_moves_html(
 
     parts = [CSS, COPY_CSS, MOVES_RESULT_CSS]
     if include_scripts:
+        parts.append(THEME_SCRIPT)
         parts.append(BOARD_COPY_SCRIPT)
 
     parts.append(f'<h1>{escape(str(title))}</h1>')
     parts.append(f'<div class="subtitle">{escape(str(subtitle))}</div>')
+    if include_scripts:
+        parts.append(
+            f'<div class="board-toolbar">{_theme_actions_html()}</div>'
+        )
     parts.append("""<div class="legend">
   <div class="leg"><span class="leg-box" style="background:var(--tile)"></span> Existing</div>
   <div class="leg"><span class="leg-box" style="background:var(--new-tile);box-shadow:inset 0 0 0 2px var(--new-border)"></span> Play here</div>

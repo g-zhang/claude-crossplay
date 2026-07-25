@@ -96,7 +96,9 @@ navigation; `--no-script` output keeps plain `#` anchors and `:target`
 highlighting. Board rasterization prefers a `blob:` URL and falls back to a
 `data:` URL when a viewer's policy blocks blob images, and `Copy SVG` includes a
 PNG flavor because document editors ignore the SVG flavor and would otherwise
-paste raw markup.
+paste raw markup. When a viewer blocks the Clipboard API by permissions policy,
+the page removes its copy controls on load rather than showing buttons that can
+only fail; the board and audit cards still render.
 
 ## Troubleshooting
 

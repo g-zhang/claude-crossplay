@@ -275,7 +275,8 @@ important caveat. Board-confirmation and move pages have `Copy SVG` and
 `Copy PNG` controls for sharing each board; browser clipboard permission is
 required. Both controls place a PNG on the clipboard, so documents paste an
 image, while `Copy SVG` also carries the vector markup for tools that read it.
-Use `--no-script` only when the destination forbids JavaScript; it
+Viewers that block the Clipboard API hide these controls automatically. Use
+`--no-script` only when the destination forbids JavaScript; it
 also omits the copy controls.
 
 ## Report a problem
