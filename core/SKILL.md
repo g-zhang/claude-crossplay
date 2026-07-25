@@ -14,6 +14,8 @@ compatibility: >-
   Requires Python 3.8+, git, opencv-python, numpy, filesystem access,
   and a user-accessible location for HTML and PNG outputs. Dictionary setup
   requires outbound HTTPS to github.com unless NWL23 source files are supplied.
+  Tesseract 5 with English data is optional for score and letter review; score
+  topology and visual letter confirmation are the fallbacks.
 ---
 
 # NYT Crossplay Solver
@@ -39,7 +41,7 @@ versions.
 
 - `scripts/setup_dict.py`: build the NWL23 dictionary.
 - `scripts/grid_overlay.py`: locate the board, draw a numbered overlay, and
-  generate a board-aware tile audit with enlarged score corners.
+  generate a board-aware source-letter and score-corner audit.
 - `scripts/solver.py`: validate board structure and generate scored moves.
 - `scripts/moves_template.py`: render board confirmation and move HTML.
 - `scripts/nwl23_ref.py`: curated strategic word lists and lookup helpers.
@@ -148,13 +150,31 @@ Each card places the full source tile and an enlarged score corner beside what
 and transcribed cells, so a red `detected: NO` or `JSON: MISSING` header exposes
 coverage mismatches.
 
+The audit checks for optional Tesseract OCR first. When `tesseract` is on
+`PATH` and its `eng` language data is available, a usable score digit is
+compared directly with the JSON claim. Two nearby thresholds must also produce
+the same single `A-Z` reading before the central source letter is compared with
+JSON. Letter OCR is secondary evidence only: never use it to rewrite
+`board.json`, and visually resolve each red `LETTER!` review.
+
+If score OCR is unavailable or returns no usable digit, the audit falls back to
+its bundled multi-threshold score-shape check. A red `SCORE!` card is a required
+blank-casing review; `BOTH!` means both letter and score conflict. A neutral
+ambiguity note means the fallback topology cannot distinguish 0 from 4, 6, or
+10; inspect those corners visually instead of guessing. Blank status always
+comes from the score corner because a blank and normal tile display the same
+main letter.
+
 Audit every card in both directions:
 
 - Every source tile whose score corner displays `0` must be lowercase in
   `board.json`.
 - Every lowercase tile in `board.json` must display `0` in the source score
   corner.
-- Correct every detector/JSON mismatch, then regenerate the audit.
+- Every transcribed letter must match the source tile; resolve a `LETTER!`
+  review visually instead of accepting OCR automatically.
+- Resolve every detector/JSON, letter/JSON, or score/JSON review, then
+  regenerate the audit.
 
 Read `references/game-rules.md` and independently compute the most recently
 reported play when the screenshot identifies its placement and score. A score
@@ -187,7 +207,7 @@ theme-aware verification cards beneath the board. The cards reflow for phone
 and desktop widths while preserving the full-tile and enlarged-score evidence.
 Each occupied board cell links to its audit card, and each card returns to and
 highlights that board cell. The summary controls filter the cards to all tiles,
-blanks, or detector/transcription mismatches.
+blanks, detector/transcription mismatches, or unresolved score checks.
 State the blank coordinates you marked, including when the list is empty, and
 ask the user to confirm both the letters and all score-0 blank tiles. Wait for
 explicit confirmation or corrections. This checkpoint is intentionally before

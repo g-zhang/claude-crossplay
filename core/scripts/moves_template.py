@@ -22,6 +22,18 @@ DEFAULT_PREMIUM = {
     for position, premium_type in PREMIUM.items()
 }
 AUDIT_METADATA_KEY = "crossplay-audit"
+# Mirrors grid_overlay without importing its OpenCV rendering pipeline.
+AUDIT_SCORE_POINT_HOLES = {
+    0: 1,
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 1,
+    5: 0,
+    6: 1,
+    8: 2,
+    10: 1,
+}
 LEGACY_AUDIT_LAYOUT = {
     "columns": 4,
     "page_header_height": 64,
@@ -153,9 +165,12 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .audit-filter:focus-visible{outline:2px solid var(--audit-accent);outline-offset:2px}
 .audit-filter[aria-pressed="true"]{box-shadow:inset 0 0 0 2px currentColor}
 .audit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:10px;padding:10px;border:1px solid var(--surface-border);border-top:0;border-radius:0 0 12px 12px;background:var(--surface-subtle)}
-.audit-card{display:block;min-width:0;padding:9px;border:1px solid var(--surface-border);border-radius:10px;background:var(--surface);box-shadow:var(--surface-shadow);color:inherit;text-decoration:none;cursor:pointer;scroll-margin-top:16px}
+.audit-card{display:block;min-width:0;padding:9px;border:1px solid var(--surface-border);border-radius:10px;background:var(--surface);box-shadow:var(--surface-shadow);color:inherit;text-decoration:none;scroll-margin-top:16px}
+.audit-card[hidden]{display:none}
+.audit-card[href]{cursor:pointer}
 .audit-card.blank{border-color:var(--audit-blank)}
 .audit-card.mismatch{border-color:var(--audit-alert);box-shadow:inset 0 3px 0 var(--audit-alert)}
+.audit-card.score:not(.mismatch){border-color:var(--audit-blank)}
 .audit-card:hover{border-color:var(--audit-accent)}
 .audit-card:focus-visible{outline:2px solid var(--audit-accent);outline-offset:2px}
 .audit-card:target{outline:3px solid var(--divider);outline-offset:2px}
@@ -170,6 +185,11 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .audit-figure figcaption{margin-top:5px;color:var(--text-sec);font-size:10px;font-weight:650}
 .audit-claim{margin-top:8px;color:var(--text-sec);font-size:12px;line-height:1.4}
 .audit-claim code{padding:1px 4px;border-radius:4px;background:var(--surface-subtle);color:var(--text);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;font-weight:700}
+.audit-score-note,.audit-letter-note{display:block;margin-top:5px;font-weight:650}
+.audit-score-note.review{color:var(--audit-alert)}
+.audit-score-note.ambiguous{color:var(--audit-blank)}
+.audit-score-note.unavailable{color:var(--text-sec)}
+.audit-letter-note.review{color:var(--audit-alert)}
 .audit-empty,.audit-filter-empty{grid-column:1/-1;padding:24px;color:var(--text-sec);font-size:13px;text-align:center}
 .audit-filter-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .tile-audit-image-wrap{padding:12px;border:1px solid var(--surface-border);border-top:0;border-radius:0 0 12px 12px;background:var(--surface-subtle);overflow:auto}
@@ -494,7 +514,7 @@ function handleAuditFilter(button) {
     throw new Error('Tile audit panel is missing');
   }
   const filter = button.dataset.auditFilter;
-  if (!['all', 'blank', 'mismatch'].includes(filter)) {
+  if (!['all', 'blank', 'mismatch', 'letter', 'score'].includes(filter)) {
     throw new Error(`Unknown tile audit filter: ${filter}`);
   }
   const cards = Array.from(panel.querySelectorAll('.audit-card'));
@@ -763,6 +783,58 @@ def _png_info(image_bytes):
     return width, height, text_chunks
 
 
+def _validate_letter_evidence(entry):
+    letter_check = entry["letter_check"]
+    if (
+            not isinstance(letter_check, str)
+            or letter_check not in {"clear", "review", "unavailable"}):
+        raise ValueError("Tile audit PNG entry has invalid letter check")
+    letter_method = entry["letter_method"]
+    if (
+            not isinstance(letter_method, str)
+            or letter_method not in {"tesseract", "none"}):
+        raise ValueError("Tile audit PNG entry has invalid letter method")
+    letter_ocr = entry["letter_ocr"]
+    if (
+            letter_ocr is not None
+            and (
+                not isinstance(letter_ocr, str)
+                or len(letter_ocr) != 1
+                or not letter_ocr.isascii()
+                or not "A" <= letter_ocr <= "Z")):
+        raise ValueError("Tile audit PNG entry has invalid OCR letter")
+    reason = entry["letter_reason"]
+    if not isinstance(reason, str) or not reason or len(reason) > 300:
+        raise ValueError("Tile audit PNG entry has invalid letter reason")
+    if not entry["transcribed"]:
+        if (
+                letter_check != "unavailable"
+                or letter_method != "none"
+                or letter_ocr is not None):
+            raise ValueError(
+                "Tile audit PNG entry has letter evidence "
+                "for an untranscribed tile"
+            )
+        return
+    if letter_check == "unavailable":
+        if letter_method != "none" or letter_ocr is not None:
+            raise ValueError(
+                "Tile audit PNG entry has invalid letter evidence"
+            )
+        return
+    if letter_method != "tesseract" or letter_ocr is None:
+        raise ValueError("Tile audit PNG entry has invalid letter evidence")
+    expected_check = (
+        "clear"
+        if letter_ocr == entry["letter"].upper()
+        else "review"
+    )
+    if letter_check != expected_check:
+        raise ValueError(
+            "Tile audit PNG entry has invalid letter semantics"
+        )
+
+
 def _validate_audit_manifest(manifest, width, height):
     if not isinstance(manifest, dict) or manifest.get("version") != 1:
         raise ValueError("Tile audit PNG has unsupported responsive metadata")
@@ -812,6 +884,8 @@ def _validate_audit_manifest(manifest, width, height):
         raise ValueError("Tile audit PNG layout does not match its sheet")
 
     seen = set()
+    score_metadata_modes = set()
+    letter_metadata_modes = set()
     for entry in entries:
         if not isinstance(entry, dict):
             raise ValueError("Tile audit PNG contains an invalid entry")
@@ -831,6 +905,8 @@ def _validate_audit_manifest(manifest, width, height):
                     f"Tile audit PNG entry has invalid field: {key}"
                 )
         letter = entry.get("letter")
+        if "letter" not in entry:
+            raise ValueError("Tile audit PNG entry is missing letter")
         if entry["transcribed"]:
             if (
                     not isinstance(letter, str)
@@ -841,12 +917,151 @@ def _validate_audit_manifest(manifest, width, height):
         elif letter is not None:
             raise ValueError("Untranscribed tile audit entry has a letter")
         points = entry.get("points")
+        if "points" not in entry:
+            raise ValueError("Tile audit PNG entry is missing points")
         if points is not None and (type(points) is not int or points < 0):
             raise ValueError("Tile audit PNG entry has invalid points")
         if entry["blank"] and not entry["transcribed"]:
             raise ValueError("Untranscribed tile audit entry cannot be blank")
         if entry["transcribed"] and points is None:
             raise ValueError("Transcribed tile audit entry is missing points")
+        if entry["transcribed"]:
+            expected_points = (
+                0 if entry["blank"] else TILE_PTS.get(letter.upper())
+            )
+            if points != expected_points:
+                raise ValueError(
+                    "Tile audit PNG entry has inconsistent points"
+                )
+        score_fields = {
+            "score_check",
+            "score_holes",
+            "score_method",
+            "score_ocr_digit",
+            "score_reason",
+        }
+        score_metadata_present = any(
+            key in entry for key in score_fields
+        )
+        score_metadata_modes.add(score_metadata_present)
+        if (
+                score_metadata_present
+                and not score_fields.issubset(entry)):
+            raise ValueError(
+                "Tile audit PNG entry has incomplete score evidence"
+            )
+        if score_metadata_present:
+            score_check = entry["score_check"]
+            if (
+                    not isinstance(score_check, str)
+                    or score_check not in {
+                        "clear", "ambiguous", "review", "unavailable"
+                    }):
+                raise ValueError(
+                    "Tile audit PNG entry has invalid score check"
+                )
+            score_holes = entry["score_holes"]
+            if (
+                    score_holes is not None
+                    and (type(score_holes) is not int or score_holes < 0)):
+                raise ValueError(
+                    "Tile audit PNG entry has invalid score topology"
+                )
+            score_method = entry["score_method"]
+            score_ocr_digit = entry["score_ocr_digit"]
+            if (
+                    not isinstance(score_method, str)
+                    or score_method not in {
+                        "none", "tesseract", "topology"
+                    }):
+                raise ValueError(
+                    "Tile audit PNG entry has invalid score method"
+                )
+            if (
+                    score_ocr_digit is not None
+                    and (
+                        type(score_ocr_digit) is not int
+                        or not 0 <= score_ocr_digit <= 10)):
+                raise ValueError(
+                    "Tile audit PNG entry has invalid OCR score"
+                )
+            if score_method == "tesseract":
+                if (
+                        not entry["transcribed"]
+                        or score_ocr_digit is None
+                        or score_holes is not None
+                        or score_check != (
+                            "clear"
+                            if score_ocr_digit == points
+                            else "review"
+                        )):
+                    raise ValueError(
+                        "Tile audit PNG entry has invalid OCR evidence"
+                    )
+            elif score_ocr_digit is not None:
+                raise ValueError(
+                    "Tile audit PNG entry has unexpected OCR evidence"
+                )
+            elif score_method == "none":
+                if score_check != "unavailable" or score_holes is not None:
+                    raise ValueError(
+                        "Tile audit PNG entry has invalid score evidence"
+                    )
+            else:
+                if not entry["transcribed"]:
+                    raise ValueError(
+                        "Tile audit PNG entry has invalid topology evidence"
+                    )
+                natural_points = TILE_PTS.get(letter.upper())
+                alternative_points = (
+                    natural_points if entry["blank"] else 0
+                )
+                expected_holes = AUDIT_SCORE_POINT_HOLES[points]
+                alternative_holes = AUDIT_SCORE_POINT_HOLES[
+                    alternative_points
+                ]
+                if expected_holes == alternative_holes:
+                    expected_check = "ambiguous"
+                elif score_holes is None:
+                    expected_check = "unavailable"
+                elif score_holes == expected_holes:
+                    expected_check = "clear"
+                else:
+                    expected_check = "review"
+                if score_check != expected_check:
+                    raise ValueError(
+                        "Tile audit PNG entry has invalid topology evidence"
+                    )
+            score_reason = entry["score_reason"]
+            if (
+                    not isinstance(score_reason, str)
+                    or not score_reason
+                    or len(score_reason) > 300):
+                raise ValueError(
+                    "Tile audit PNG entry has invalid score reason"
+                )
+        letter_fields = {
+            "letter_check",
+            "letter_method",
+            "letter_ocr",
+            "letter_reason",
+        }
+        letter_metadata_present = any(
+            key in entry for key in letter_fields
+        )
+        letter_metadata_modes.add(letter_metadata_present)
+        if (
+                letter_metadata_present
+                and not letter_fields.issubset(entry)):
+            raise ValueError(
+                "Tile audit PNG entry has incomplete letter evidence"
+            )
+        if letter_metadata_present:
+            _validate_letter_evidence(entry)
+    if len(score_metadata_modes) > 1:
+        raise ValueError("Tile audit PNG mixes score evidence schemas")
+    if len(letter_metadata_modes) > 1:
+        raise ValueError("Tile audit PNG mixes letter evidence schemas")
     return manifest
 
 
@@ -897,18 +1112,44 @@ def _audit_card_html(entry, index, layout, detection_known, scale):
     col = entry["col"]
     letter = entry["letter"]
     points = entry["points"]
-    mismatch = (
+    detection_mismatch = (
         detection_known
         and entry["detected"] != entry["transcribed"]
     )
+    score_check = entry.get("score_check")
+    letter_review = entry.get("letter_check") == "review"
+    score_review = score_check == "review"
+    score_attention = (
+        entry["transcribed"]
+        and score_check in {"review", "ambiguous", "unavailable"}
+    )
+    mismatch = detection_mismatch or letter_review or score_review
     classes = ["audit-card"]
     if entry["blank"]:
         classes.append("blank")
+    if score_attention:
+        classes.append("score")
+    if letter_review:
+        classes.append("letter")
     if mismatch:
         classes.append("mismatch")
 
-    if mismatch:
+    if detection_mismatch and letter_review and score_review:
+        state = "Review tile, letter, and score"
+    elif detection_mismatch and letter_review:
+        state = "Review tile and letter"
+    elif letter_review and score_review:
+        state = "Review letter and score"
+    elif detection_mismatch and score_review:
+        state = "Review tile and score"
+    elif letter_review:
+        state = "Review letter"
+    elif score_review:
+        state = "Review score"
+    elif detection_mismatch:
         state = "Review mismatch"
+    elif score_attention:
+        state = "Verify score"
     elif entry["blank"]:
         state = "Blank - 0 pts"
     elif entry["transcribed"]:
@@ -935,6 +1176,16 @@ def _audit_card_html(entry, index, layout, detection_known, scale):
             and not entry["detected"]
             and entry["transcribed"]):
         claim += " Source detection missed this coordinate."
+    if score_attention:
+        claim += (
+            f'<span class="audit-score-note {score_check}">'
+            f'{escape(entry["score_reason"])}</span>'
+        )
+    if letter_review:
+        claim += (
+            '<span class="audit-letter-note review">'
+            f'{escape(entry["letter_reason"])}</span>'
+        )
 
     card_row, card_col = divmod(index, layout["columns"])
     card_x = card_col * layout["card_width"]
@@ -948,12 +1199,23 @@ def _audit_card_html(entry, index, layout, detection_known, scale):
     scaled_whole_x = int(round(whole_x * scale))
     scaled_score_x = int(round(score_x * scale))
     coordinate = f"Row {row}, column {col}"
-    kind = "blank tile" if entry["blank"] else "tile"
+    if entry["transcribed"]:
+        kind = "blank tile" if entry["blank"] else "tile"
+        opening = (
+            f'<a id="audit-{row}-{col}" class="{" ".join(classes)}" '
+            f'href="#board-cell-{row}-{col}" aria-label="Return to {kind} '
+            f'{escape(letter)} at row {row}, column {col} on the board">'
+        )
+        closing = "</a>"
+    else:
+        opening = (
+            f'<article id="audit-{row}-{col}" '
+            f'class="{" ".join(classes)}" tabindex="-1">'
+        )
+        closing = "</article>"
     return (
-        f'<a id="audit-{row}-{col}" class="{" ".join(classes)}" '
-        f'href="#board-cell-{row}-{col}" aria-label="Return to {kind} '
-        f'{escape(letter)} at row {row}, column {col} on the board">'
-        '<div class="audit-card-top">'
+        opening
+        + '<div class="audit-card-top">'
         f'<span class="audit-coordinate">({row},{col})</span>'
         f'<span class="audit-state">{escape(state)}</span></div>'
         '<div class="audit-comparison">'
@@ -967,7 +1229,7 @@ def _audit_card_html(entry, index, layout, detection_known, scale):
         f'corner at {escape(coordinate)}" style="background-position:'
         f'-{scaled_score_x}px -{scaled_image_y}px"></div>'
         '<figcaption>Score corner</figcaption></figure></div>'
-        f'<p class="audit-claim">{claim}</p></a>'
+        f'<p class="audit-claim">{claim}</p>{closing}'
     )
 
 
@@ -979,9 +1241,37 @@ def _responsive_tile_audit_html(
     height = manifest["sheet"]["height"]
     blank_count = sum(entry["blank"] for entry in entries)
     detection_known = manifest["detection_known"]
+    score_metadata_known = any("score_check" in entry for entry in entries)
+    letter_metadata_known = any(
+        "letter_check" in entry
+        for entry in entries
+    )
     mismatch_count = sum(
-        entry["detected"] != entry["transcribed"] for entry in entries
-    ) if detection_known else None
+        (
+            detection_known
+            and entry["detected"] != entry["transcribed"]
+        )
+        or entry.get("letter_check") == "review"
+        or entry.get("score_check") == "review"
+        for entry in entries
+    ) if (
+        detection_known or score_metadata_known or letter_metadata_known
+    ) else None
+    score_check_count = sum(
+        entry["transcribed"]
+        and entry.get("score_check") in {
+            "review", "ambiguous", "unavailable"
+        }
+        for entry in entries
+    )
+    score_review_count = sum(
+        entry.get("score_check") == "review"
+        for entry in entries
+    )
+    letter_review_count = sum(
+        entry.get("letter_check") == "review"
+        for entry in entries
+    )
     scale = 0.45
     crop_size = max(1, int(round(layout["image_size"] * scale)))
     cards = "".join(
@@ -1034,6 +1324,32 @@ def _responsive_tile_audit_html(
             f"{mismatch_count} {mismatch_word}",
             mismatch_class,
         )
+    if score_metadata_known:
+        score_word = "check" if score_check_count == 1 else "checks"
+        score_class = (
+            "alert"
+            if score_review_count
+            else "blank" if score_check_count else "ok"
+        )
+        score_chip = filter_chip(
+            "score",
+            f"{score_check_count} score {score_word}",
+            score_class,
+        )
+    else:
+        score_chip = ""
+    if letter_metadata_known:
+        letter_word = (
+            "review" if letter_review_count == 1 else "reviews"
+        )
+        letter_class = "alert" if letter_review_count else "ok"
+        letter_chip = filter_chip(
+            "letter",
+            f"{letter_review_count} letter {letter_word}",
+            letter_class,
+        )
+    else:
+        letter_chip = ""
     scaled_width = int(round(width * scale))
     scaled_height = int(round(height * scale))
     filter_feedback = (
@@ -1050,10 +1366,13 @@ def _responsive_tile_audit_html(
         '<h2 id="source-tile-audit">Tile and score audit</h2>'
         '<p class="audit-intro">Compare each source tile with its enlarged '
         'score corner and JSON claim. Every displayed 0 must be a lowercase '
-        'blank in JSON, and every lowercase blank must display 0.</p></div>'
+        'blank in JSON, and every lowercase blank must display 0. Optional '
+        'OCR and built-in shape checks flag supported conflicts '
+        'without changing JSON. Visually verify every warning and unavailable '
+        'reading.</p></div>'
         '<div class="audit-summary">'
         f"{tile_chip}{blank_chip}"
-        f"{detection_chip}</div></div>"
+        f"{detection_chip}{letter_chip}{score_chip}</div></div>"
         f'<div id="source-audit-grid" class="audit-grid" '
         f'style="--audit-sheet:url('
         f"'data:image/png;base64,{encoded}');"

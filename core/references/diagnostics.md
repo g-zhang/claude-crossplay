@@ -40,10 +40,52 @@ cell coverage threshold of 0.42.
 With `--board-json` and `--tile-audit`, the script also creates one card for
 every cell present in either the detector or the transcription. Each card shows
 the full source tile, an enlarged top-right score corner, and the JSON letter,
-blank status, and expected points. It does not OCR or infer the score; the audit
-keeps image evidence and JSON claims side by side for explicit verification.
-The PNG carries layout metadata that the board-confirmation renderer uses to
-build theme-aware cards which reflow across phone and desktop widths.
+blank status, and expected points.
+
+The audit uses Tesseract first when a usable `tesseract` executable and its
+`eng` language data are available. It thresholds the enlarged score corner at
+180, places the dark glyph on a padded white canvas, and runs single-character
+PSM 10 with a digit whitelist. A recognized score is compared directly with the
+JSON claim. The audit records `tesseract` versus `topology` as the evidence
+method in the PNG metadata.
+
+The same optional executable provides a secondary letter check. After removing
+the yellow last-move outline, the audit crops 15-80 percent of the source
+tile's width and 10-85 percent of its height, resizes it to 120 by 120 pixels,
+and runs PSM 10 with an `A-Z` whitelist at thresholds 180 and 190. Both passes
+must return the same single uppercase letter. Agreement with JSON is `clear`;
+disagreement is a required `review`; empty, multi-character, or disagreeing
+output is `unavailable` and leaves the full source tile for visual review.
+Confidence is not used because correct readings can have low reported
+confidence on these small stylized glyphs. OCR evidence never changes JSON.
+
+Tesseract remains optional. If the executable is absent or returns no usable
+digit, the audit counts enclosed loops in the score glyph at four thresholds
+and compares stable topology with the JSON claim. This can confidently expose
+0-versus-1/2/3/5/8 conflicts, including a normal uppercase tile whose corner
+looks like 0. It deliberately marks 0 versus 4, 6, or 10 as ambiguous because
+those values share one enclosed loop in the Crossplay font. An installed but
+unusable Tesseract emits a warning before the topology fallback. If
+`tesseract --list-langs` does not include `eng`, install the English model or
+set `TESSDATA_PREFIX` to the directory containing `eng.traineddata`. Set
+`CROSSPLAY_TESSERACT` to an executable name or path when Tesseract is not on
+`PATH`; set it to `off` to disable OCR explicitly.
+
+The script invokes Tesseract directly with list-form `subprocess.run`, streams
+the prepared PNG through stdin, and reads stdout. `pytesseract` would still
+require the same native executable and language data while adding Pillow and
+temporary-file conversion, so it is not required for these narrow symbol
+checks.
+
+Treat a red letter or score warning as a required review, but do not treat the
+absence of a warning as proof for an unavailable letter or ambiguous score.
+Unstable topology is also shown as a visual check rather than silently treated
+as clear. Implausibly empty or full threshold masks are unavailable instead of
+being interpreted as zero-loop digits. The fallbacks assume the current bright
+glyphs on darker tiles; revalidate their goldens if the app changes that font
+or color treatment. The PNG carries the evidence and result in layout metadata
+that the board-confirmation renderer validates before building theme-aware
+cards which reflow across phone and desktop widths.
 
 ## Troubleshooting
 
@@ -51,6 +93,9 @@ build theme-aware cards which reflow across phone and desktop widths.
   values in `game-rules.md`. When the reconstruction is too high, inspect the
   affected word's score corners for a displayed 0 that should be lowercase in
   JSON.
+- **Letter mismatch:** Compare the full source crop with JSON. Treat OCR as a
+  prompt to review, not as an automatic correction. Check the score corner
+  separately because the main letter cannot distinguish a blank.
 - **No moves:** Recheck board reconstruction and confirm existing words are
   present in `dict.txt`.
 - **Misaligned overlay:** Inspect the calibration diagnostics printed by
@@ -59,8 +104,8 @@ build theme-aware cards which reflow across phone and desktop widths.
 - **False tile detections:** Increase the coverage threshold when premium
   squares are classified as tiles; decrease it when real tiles are missed.
 - **Tile-audit mismatch:** A red card means the detector and `board.json`
-  disagree about whether the cell is occupied. Resolve it against the original
-  screenshot before solving.
+  disagree about occupancy or the score evidence conflicts with the claimed
+  points. Resolve it against the original screenshot before solving.
 - **Input rejected:** Keep board coordinates within `0..14`, use one ASCII
   letter per occupied cell, represent existing blanks in lowercase, and pass a
   rack of one to seven `A-Z` or `?` tiles. The board and rack together may

@@ -5,7 +5,11 @@ Detects the board region, highlights tile cells, and builds a tile audit sheet.
 """
 
 import json
+import os
+import shutil
 import struct
+import subprocess
+import sys
 import zlib
 from pathlib import Path
 
@@ -17,6 +21,32 @@ from solver import TILE_PTS, load_board_json
 
 SCORE_CROP_WIDTH_RATIO = 0.35
 SCORE_CROP_HEIGHT_RATIO = 0.45
+SCORE_ANALYSIS_THRESHOLDS = (150, 170, 190, 210)
+SCORE_HOLE_MIN_AREA_RATIO = 0.001
+SCORE_BORDER_RATIO = 0.03
+SCORE_GLYPH_MIN_AREA_RATIO = 0.01
+SCORE_GLYPH_MAX_AREA_RATIO = 0.40
+SCORE_OCR_THRESHOLD = 180
+SCORE_OCR_BORDER = 20
+SCORE_OCR_PSM = 10
+SCORE_OCR_TIMEOUT_SECONDS = 5
+LETTER_CROP_LEFT_RATIO = 0.15
+LETTER_CROP_RIGHT_RATIO = 0.80
+LETTER_CROP_TOP_RATIO = 0.10
+LETTER_CROP_BOTTOM_RATIO = 0.85
+LETTER_OCR_THRESHOLDS = (180, 190)
+LETTER_OCR_BORDER = 20
+SCORE_POINT_HOLES = {
+    0: 1,
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 1,
+    5: 0,
+    6: 1,
+    8: 2,
+    10: 1,
+}
 YELLOW_HIGHLIGHT_LOWER = np.array([10, 25, 60])
 YELLOW_HIGHLIGHT_UPPER = np.array([55, 255, 255])
 AUDIT_METADATA_KEY = "crossplay-audit"
@@ -38,6 +68,475 @@ def remove_yellow_highlight(image):
     if cv2.countNonZero(mask) == 0:
         return image
     return cv2.inpaint(image, mask, 2, cv2.INPAINT_TELEA)
+
+
+def _find_tesseract():
+    """Return a usable Tesseract executable, plus any setup error."""
+    configured = os.environ.get("CROSSPLAY_TESSERACT")
+    if (
+            configured is not None
+            and configured.strip().lower() in {
+                "", "0", "false", "none", "off"
+            }):
+        return None, None
+    candidate = configured or "tesseract"
+    executable = shutil.which(candidate)
+    if executable is None:
+        if configured:
+            return (
+                None,
+                "Configured Tesseract executable was not found; "
+                "using topology fallback.",
+            )
+        return None, None
+
+    try:
+        result = subprocess.run(
+            [executable, "--list-langs"],
+            capture_output=True,
+            timeout=SCORE_OCR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            None,
+            "Tesseract language check timed out; using topology fallback.",
+        )
+    except OSError:
+        return (
+            None,
+            "Tesseract language check failed; using topology fallback.",
+        )
+
+    output = result.stdout + b"\n" + result.stderr
+    languages = {
+        line.strip()
+        for line in output.decode("utf-8", errors="replace").splitlines()
+    }
+    if result.returncode != 0:
+        return (
+            None,
+            "Tesseract could not load its language data; "
+            "using topology fallback.",
+        )
+    if "eng" not in languages:
+        return (
+            None,
+            "Tesseract English language data is unavailable; "
+            "using topology fallback.",
+        )
+    return executable, None
+
+
+def _prepare_score_ocr_image(score_image):
+    """Prepare a score corner as dark digits on a white OCR canvas."""
+    if score_image is None or score_image.size == 0:
+        return None
+    if score_image.ndim == 3:
+        gray = cv2.cvtColor(score_image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = score_image
+    interpolation = (
+        cv2.INTER_AREA
+        if max(gray.shape[:2]) > AUDIT_IMAGE_SIZE
+        else cv2.INTER_CUBIC
+    )
+    gray = cv2.resize(
+        gray,
+        (AUDIT_IMAGE_SIZE, AUDIT_IMAGE_SIZE),
+        interpolation=interpolation,
+    )
+    _, bright_glyph = cv2.threshold(
+        gray,
+        SCORE_OCR_THRESHOLD,
+        255,
+        cv2.THRESH_BINARY,
+    )
+    dark_glyph = 255 - bright_glyph
+    return cv2.copyMakeBorder(
+        dark_glyph,
+        SCORE_OCR_BORDER,
+        SCORE_OCR_BORDER,
+        SCORE_OCR_BORDER,
+        SCORE_OCR_BORDER,
+        cv2.BORDER_CONSTANT,
+        value=255,
+    )
+
+
+def _prepare_letter_ocr_image(cell_image, threshold):
+    """Crop and threshold the large tile letter for OCR."""
+    if cell_image is None or cell_image.size == 0:
+        return None
+    if cell_image.ndim == 3:
+        gray = cv2.cvtColor(cell_image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = cell_image
+    height, width = gray.shape[:2]
+    x1 = min(
+        width - 1,
+        int(round(width * LETTER_CROP_LEFT_RATIO)),
+    )
+    x2 = max(
+        x1 + 1,
+        min(width, int(round(width * LETTER_CROP_RIGHT_RATIO))),
+    )
+    y1 = min(
+        height - 1,
+        int(round(height * LETTER_CROP_TOP_RATIO)),
+    )
+    y2 = max(
+        y1 + 1,
+        min(height, int(round(height * LETTER_CROP_BOTTOM_RATIO))),
+    )
+    crop = gray[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    crop = cv2.resize(
+        crop,
+        (AUDIT_IMAGE_SIZE, AUDIT_IMAGE_SIZE),
+        interpolation=cv2.INTER_CUBIC,
+    )
+    _, bright_glyph = cv2.threshold(
+        crop,
+        threshold,
+        255,
+        cv2.THRESH_BINARY,
+    )
+    dark_glyph = 255 - bright_glyph
+    return cv2.copyMakeBorder(
+        dark_glyph,
+        LETTER_OCR_BORDER,
+        LETTER_OCR_BORDER,
+        LETTER_OCR_BORDER,
+        LETTER_OCR_BORDER,
+        cv2.BORDER_CONSTANT,
+        value=255,
+    )
+
+
+def _run_tesseract_symbol(prepared, executable, whitelist, label):
+    """Run single-symbol OCR on a prepared image."""
+    if prepared is None:
+        return None, None
+    fallback = (
+        "topology fallback"
+        if label == "Score"
+        else "visual fallback"
+    )
+    try:
+        encoded_ok, encoded = cv2.imencode(".png", prepared)
+    except cv2.error:
+        return None, f"{label} OCR image encoding failed; using {fallback}."
+    if not encoded_ok:
+        return None, f"{label} OCR image encoding failed; using {fallback}."
+
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "stdin",
+                "stdout",
+                "--psm",
+                str(SCORE_OCR_PSM),
+                "-l",
+                "eng",
+                "-c",
+                f"tessedit_char_whitelist={whitelist}",
+            ],
+            input=encoded.tobytes(),
+            capture_output=True,
+            timeout=SCORE_OCR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None, (
+            f"Tesseract {label.lower()} OCR timed out; "
+            f"using {fallback}."
+        )
+    except OSError:
+        return None, (
+            f"Tesseract {label.lower()} OCR failed; using {fallback}."
+        )
+
+    if result.returncode != 0:
+        return None, (
+            f"Tesseract {label.lower()} OCR failed; using {fallback}."
+        )
+    return result.stdout.decode("utf-8", errors="replace").strip(), None
+
+
+def _read_score_digit(score_image, executable):
+    """Read one score digit with Tesseract, returning an error separately."""
+    text, error = _run_tesseract_symbol(
+        _prepare_score_ocr_image(score_image),
+        executable,
+        "0123456789",
+        "Score",
+    )
+    if error or text is None:
+        return None, error
+    if not text.isascii() or not text.isdigit():
+        return None, None
+    digit = int(text)
+    if text != str(digit) or not 0 <= digit <= 10:
+        return None, None
+    return digit, None
+
+
+def _read_tile_letter(cell_image, executable):
+    """Read a stable tile letter across two nearby thresholds."""
+    observations = []
+    for threshold in LETTER_OCR_THRESHOLDS:
+        text, error = _run_tesseract_symbol(
+            _prepare_letter_ocr_image(cell_image, threshold),
+            executable,
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "Letter",
+        )
+        if error:
+            return None, error
+        if (
+                text is None
+                or len(text) != 1
+                or not text.isascii()
+                or not "A" <= text <= "Z"):
+            return None, None
+        observations.append(text)
+    if len(set(observations)) != 1:
+        return None, None
+    return observations[0], None
+
+
+def analyze_tile_letter(letter, ocr_letter=None):
+    """Compare stable letter OCR with a transcribed tile claim."""
+    if (
+            not isinstance(letter, str)
+            or len(letter) != 1
+            or not letter.isascii()
+            or not letter.isalpha()):
+        return {
+            "letter_check": "unavailable",
+            "letter_method": "none",
+            "letter_ocr": None,
+            "letter_reason": "Letter check requires a transcribed ASCII letter.",
+        }
+    if (
+            ocr_letter is not None
+            and (
+                not isinstance(ocr_letter, str)
+                or len(ocr_letter) != 1
+                or not ocr_letter.isascii()
+                or not "A" <= ocr_letter <= "Z")):
+        raise ValueError("OCR tile letter must be one uppercase ASCII letter")
+    claimed_letter = letter.upper()
+    if ocr_letter is None:
+        return {
+            "letter_check": "unavailable",
+            "letter_method": "none",
+            "letter_ocr": None,
+            "letter_reason": (
+                "No stable letter OCR reading is available; "
+                "compare the source tile visually."
+            ),
+        }
+    if ocr_letter == claimed_letter:
+        return {
+            "letter_check": "clear",
+            "letter_method": "tesseract",
+            "letter_ocr": ocr_letter,
+            "letter_reason": (
+                f"Tesseract read {ocr_letter}, consistent with "
+                f"JSON's {claimed_letter}."
+            ),
+        }
+    return {
+        "letter_check": "review",
+        "letter_method": "tesseract",
+        "letter_ocr": ocr_letter,
+        "letter_reason": (
+            f"Tesseract read {ocr_letter} rather than JSON's "
+            f"{claimed_letter}; verify the source tile."
+        ),
+    }
+
+
+def _score_hole_count(score_image, threshold):
+    """Count significant enclosed loops in a thresholded score glyph."""
+    if score_image is None or score_image.size == 0:
+        return None
+    if score_image.ndim == 3:
+        gray = cv2.cvtColor(score_image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = score_image
+    interpolation = (
+        cv2.INTER_AREA
+        if max(gray.shape[:2]) > AUDIT_IMAGE_SIZE
+        else cv2.INTER_CUBIC
+    )
+    gray = cv2.resize(
+        gray,
+        (AUDIT_IMAGE_SIZE, AUDIT_IMAGE_SIZE),
+        interpolation=interpolation,
+    )
+    mask = np.where(gray >= threshold, 255, 0).astype(np.uint8)
+    border = max(
+        2,
+        int(round(min(mask.shape[:2]) * SCORE_BORDER_RATIO)),
+    )
+    mask[:border, :] = 0
+    mask[-border:, :] = 0
+    mask[:, :border] = 0
+    mask[:, -border:] = 0
+    foreground_ratio = cv2.countNonZero(mask) / mask.size
+    if not (
+            SCORE_GLYPH_MIN_AREA_RATIO
+            <= foreground_ratio
+            <= SCORE_GLYPH_MAX_AREA_RATIO):
+        return None
+    contours, hierarchy = cv2.findContours(
+        mask,
+        cv2.RETR_CCOMP,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if hierarchy is None:
+        return 0
+    min_area = mask.size * SCORE_HOLE_MIN_AREA_RATIO
+    return sum(
+        1
+        for index, relation in enumerate(hierarchy[0])
+        if relation[3] != -1
+        and cv2.contourArea(contours[index]) >= min_area
+    )
+
+
+def analyze_score_corner(score_image, letter, is_blank, ocr_digit=None):
+    """Compare OCR or stable score topology with a board JSON claim."""
+    if (
+            ocr_digit is not None
+            and (type(ocr_digit) is not int or not 0 <= ocr_digit <= 10)):
+        raise ValueError("OCR score digit must be an integer from 0 to 10")
+    if (
+            not isinstance(letter, str)
+            or len(letter) != 1
+            or not letter.isascii()
+            or not letter.isalpha()):
+        return {
+            "score_check": "unavailable",
+            "score_holes": None,
+            "score_method": "none",
+            "score_ocr_digit": None,
+            "score_reason": "Score check requires a transcribed ASCII letter.",
+        }
+    natural_points = TILE_PTS.get(letter.upper())
+    if natural_points not in SCORE_POINT_HOLES:
+        return {
+            "score_check": "unavailable",
+            "score_holes": None,
+            "score_method": "none",
+            "score_ocr_digit": None,
+            "score_reason": "Score check has no topology for this tile value.",
+        }
+
+    claimed_points = 0 if is_blank else natural_points
+    alternative_points = natural_points if is_blank else 0
+    if ocr_digit is not None:
+        if ocr_digit == claimed_points:
+            return {
+                "score_check": "clear",
+                "score_holes": None,
+                "score_method": "tesseract",
+                "score_ocr_digit": ocr_digit,
+                "score_reason": (
+                    f"Tesseract read {ocr_digit}, consistent with "
+                    f"JSON's {claimed_points}."
+                ),
+            }
+        if ocr_digit == alternative_points:
+            return {
+                "score_check": "review",
+                "score_holes": None,
+                "score_method": "tesseract",
+                "score_ocr_digit": ocr_digit,
+                "score_reason": (
+                    f"Tesseract read {ocr_digit} rather than JSON's "
+                    f"{claimed_points}; verify blank casing."
+                ),
+            }
+        return {
+            "score_check": "review",
+            "score_holes": None,
+            "score_method": "tesseract",
+            "score_ocr_digit": ocr_digit,
+            "score_reason": (
+                f"Tesseract read {ocr_digit}, which does not match JSON's "
+                f"{claimed_points}; verify the score and blank casing."
+            ),
+        }
+
+    expected_holes = SCORE_POINT_HOLES[claimed_points]
+    alternative_holes = SCORE_POINT_HOLES[alternative_points]
+    observations = tuple(
+        _score_hole_count(score_image, threshold)
+        for threshold in SCORE_ANALYSIS_THRESHOLDS
+    )
+    stable = None not in observations and len(set(observations)) == 1
+    if expected_holes == alternative_holes:
+        return {
+            "score_check": "ambiguous",
+            "score_holes": observations[0] if stable else None,
+            "score_method": "topology",
+            "score_ocr_digit": None,
+            "score_reason": (
+                f"Score topology cannot distinguish {claimed_points} from "
+                f"{alternative_points}; verify the corner visually."
+            ),
+        }
+    if not stable:
+        return {
+            "score_check": "unavailable",
+            "score_holes": None,
+            "score_method": "topology",
+            "score_ocr_digit": None,
+            "score_reason": (
+                "Score shape was not stable across thresholds; verify visually."
+            ),
+        }
+
+    holes = observations[0]
+    loop_word = "loop" if holes == 1 else "loops"
+
+    if holes == expected_holes:
+        return {
+            "score_check": "clear",
+            "score_holes": holes,
+            "score_method": "topology",
+            "score_ocr_digit": None,
+            "score_reason": (
+                f"Score corner has {holes} enclosed {loop_word}, consistent "
+                f"with {claimed_points}."
+            ),
+        }
+    if holes == alternative_holes:
+        return {
+            "score_check": "review",
+            "score_holes": holes,
+            "score_method": "topology",
+            "score_ocr_digit": None,
+            "score_reason": (
+                f"Score corner has {holes} enclosed {loop_word}, matching "
+                f"{alternative_points} rather than JSON's {claimed_points}; "
+                "verify blank casing."
+            ),
+        }
+    return {
+        "score_check": "review",
+        "score_holes": holes,
+        "score_method": "topology",
+        "score_ocr_digit": None,
+        "score_reason": (
+            f"Score corner has {holes} enclosed {loop_word}, which does not "
+            f"match JSON's {claimed_points}; verify the score and blank casing."
+        ),
+    }
 
 
 def find_premium_clusters(profile, min_sat=20, min_gap=5):
@@ -390,7 +889,7 @@ def collect_tile_audit_entries(detected_tiles, board, blanks, grid_size=15):
 def draw_tile_audit(
         image, bx, by, bw, bh, detected_tiles, board, blanks,
         grid_size=15, columns=4):
-    """Create cards comparing source score corners with board JSON claims."""
+    """Create cards comparing source letters and scores with board JSON."""
     entries = collect_tile_audit_entries(
         detected_tiles, board, blanks, grid_size
     )
@@ -408,7 +907,7 @@ def draw_tile_audit(
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(
         sheet,
-        "Tile audit: compare each screenshot score corner with board JSON",
+        "Tile audit: compare each source tile and score with board JSON",
         (10, 24),
         font,
         0.62,
@@ -418,7 +917,7 @@ def draw_tile_audit(
     )
     cv2.putText(
         sheet,
-        "Displayed 0 <-> lowercase blank; investigate red detection mismatches",
+        "Red LETTER!/SCORE! = conflict; VERIFY/CHECK = unresolved",
         (10, 50),
         font,
         0.52,
@@ -444,17 +943,122 @@ def draw_tile_audit(
     cell_h = bh / grid_size
     image_h, image_w = image.shape[:2]
     image_size = AUDIT_IMAGE_SIZE
+    prepared_images = {}
+    tesseract, tesseract_error = _find_tesseract()
+    if tesseract_error:
+        print(f"WARNING: {tesseract_error}", file=sys.stderr)
+    tesseract_warning_shown = tesseract_error is not None
+
+    for entry in entries:
+        r, c = entry["row"], entry["col"]
+        x1 = max(0, int(round(bx + c * cell_w)))
+        x2 = min(image_w, int(round(bx + (c + 1) * cell_w)))
+        y1 = max(0, int(round(by + r * cell_h)))
+        y2 = min(image_h, int(round(by + (r + 1) * cell_h)))
+        cell = image[y1:y2, x1:x2]
+        if cell.size == 0:
+            entry.update({
+                "letter_check": "unavailable",
+                "letter_method": "none",
+                "letter_ocr": None,
+                "letter_reason": "Source tile crop failed.",
+                "score_check": "unavailable",
+                "score_holes": None,
+                "score_method": "none",
+                "score_ocr_digit": None,
+                "score_reason": "Score corner crop failed.",
+            })
+            continue
+
+        clean_cell = remove_yellow_highlight(cell)
+        whole = cv2.resize(
+            clean_cell,
+            (image_size, image_size),
+            interpolation=cv2.INTER_CUBIC,
+        )
+        score_y2 = max(
+            1, int(cell.shape[0] * SCORE_CROP_HEIGHT_RATIO)
+        )
+        score_x1 = min(
+            cell.shape[1] - 1,
+            int(cell.shape[1] * (1.0 - SCORE_CROP_WIDTH_RATIO)),
+        )
+        score_crop = clean_cell[:score_y2, score_x1:]
+        score = cv2.resize(
+            score_crop,
+            (image_size, image_size),
+            interpolation=cv2.INTER_CUBIC,
+        )
+        ocr_digit = None
+        ocr_letter = None
+        if entry["transcribed"] and tesseract is not None:
+            ocr_digit, ocr_error = _read_score_digit(score, tesseract)
+            if ocr_error:
+                if not tesseract_warning_shown:
+                    print(f"WARNING: {ocr_error}", file=sys.stderr)
+                    tesseract_warning_shown = True
+                tesseract = None
+        if entry["transcribed"] and tesseract is not None:
+            ocr_letter, ocr_error = _read_tile_letter(
+                clean_cell,
+                tesseract,
+            )
+            if ocr_error:
+                if not tesseract_warning_shown:
+                    print(f"WARNING: {ocr_error}", file=sys.stderr)
+                    tesseract_warning_shown = True
+                tesseract = None
+        entry.update(
+            analyze_score_corner(
+                score,
+                entry["letter"],
+                entry["blank"],
+                ocr_digit=ocr_digit,
+            )
+            if entry["transcribed"]
+            else {
+                "score_check": "unavailable",
+                "score_holes": None,
+                "score_method": "none",
+                "score_ocr_digit": None,
+                "score_reason": (
+                    "Score check requires a transcribed board tile."
+                ),
+            }
+        )
+        entry.update(
+            analyze_tile_letter(entry["letter"], ocr_letter=ocr_letter)
+            if entry["transcribed"]
+            else {
+                "letter_check": "unavailable",
+                "letter_method": "none",
+                "letter_ocr": None,
+                "letter_reason": (
+                    "Letter check requires a transcribed board tile."
+                ),
+            }
+        )
+        prepared_images[(r, c)] = (whole, score)
 
     for index, entry in enumerate(entries):
         card_row, card_col = divmod(index, columns)
         x = card_col * card_w
         y = page_header_h + card_row * card_h
+        r, c = entry["row"], entry["col"]
 
-        mismatch = entry["detected"] != entry["transcribed"]
+        detection_mismatch = entry["detected"] != entry["transcribed"]
+        letter_review = entry.get("letter_check") == "review"
+        score_check = entry.get("score_check")
+        score_review = score_check == "review"
+        score_attention = (
+            entry["transcribed"]
+            and score_check in {"review", "ambiguous", "unavailable"}
+        )
+        mismatch = detection_mismatch or letter_review or score_review
         if mismatch:
             header_color = (210, 210, 255)
             border_color = (0, 0, 200)
-        elif entry["blank"]:
+        elif entry["blank"] or score_attention:
             header_color = (180, 245, 255)
             border_color = (0, 150, 190)
         else:
@@ -502,6 +1106,61 @@ def draw_tile_audit(
             1,
             cv2.LINE_AA,
         )
+        if letter_review and score_review:
+            cv2.putText(
+                sheet,
+                "BOTH!",
+                (x + card_w - 57, y + 21),
+                font,
+                0.38,
+                (0, 0, 200),
+                1,
+                cv2.LINE_AA,
+            )
+        elif letter_review:
+            cv2.putText(
+                sheet,
+                "LETTER!",
+                (x + card_w - 57, y + 21),
+                font,
+                0.31,
+                (0, 0, 200),
+                1,
+                cv2.LINE_AA,
+            )
+        elif score_review:
+            cv2.putText(
+                sheet,
+                "SCORE!",
+                (x + card_w - 57, y + 21),
+                font,
+                0.38,
+                (0, 0, 200),
+                1,
+                cv2.LINE_AA,
+            )
+        elif score_check == "ambiguous":
+            cv2.putText(
+                sheet,
+                "VERIFY",
+                (x + card_w - 57, y + 21),
+                font,
+                0.35,
+                (0, 110, 155),
+                1,
+                cv2.LINE_AA,
+            )
+        elif score_check == "unavailable" and entry["transcribed"]:
+            cv2.putText(
+                sheet,
+                "CHECK?",
+                (x + card_w - 57, y + 21),
+                font,
+                0.35,
+                (80, 80, 80),
+                1,
+                cv2.LINE_AA,
+            )
 
         cv2.putText(
             sheet, "full tile", (x + 9, y + 65),
@@ -512,39 +1171,14 @@ def draw_tile_audit(
             font, 0.38, (70, 70, 70), 1, cv2.LINE_AA
         )
 
-        r, c = entry["row"], entry["col"]
-        x1 = max(0, int(round(bx + c * cell_w)))
-        x2 = min(image_w, int(round(bx + (c + 1) * cell_w)))
-        y1 = max(0, int(round(by + r * cell_h)))
-        y2 = min(image_h, int(round(by + (r + 1) * cell_h)))
-        cell = image[y1:y2, x1:x2]
-
-        if cell.size == 0:
+        images = prepared_images.get((r, c))
+        if images is None:
             cv2.putText(
                 sheet, "CROP FAILED", (x + 9, y + 130),
                 font, 0.52, (0, 0, 200), 2, cv2.LINE_AA
             )
             continue
-
-        clean_cell = remove_yellow_highlight(cell)
-        whole = cv2.resize(
-            clean_cell,
-            (image_size, image_size),
-            interpolation=cv2.INTER_CUBIC,
-        )
-        score_y2 = max(
-            1, int(cell.shape[0] * SCORE_CROP_HEIGHT_RATIO)
-        )
-        score_x1 = min(
-            cell.shape[1] - 1,
-            int(cell.shape[1] * (1.0 - SCORE_CROP_WIDTH_RATIO)),
-        )
-        score_crop = clean_cell[:score_y2, score_x1:]
-        score = cv2.resize(
-            score_crop,
-            (image_size, image_size),
-            interpolation=cv2.INTER_CUBIC,
-        )
+        whole, score = images
 
         image_y = y + AUDIT_IMAGE_TOP
         sheet[
@@ -771,13 +1405,38 @@ def main():
             write_tile_audit(args.tile_audit, audit, entries)
         except OSError as exc:
             parser.error(str(exc))
-        mismatches = sum(
+        detection_mismatches = sum(
             entry["detected"] != entry["transcribed"]
+            for entry in entries
+        )
+        score_reviews = sum(
+            entry.get("score_check") == "review"
+            for entry in entries
+        )
+        letter_reviews = sum(
+            entry.get("letter_check") == "review"
+            for entry in entries
+        )
+        score_ocr_reads = sum(
+            entry.get("score_method") == "tesseract"
+            for entry in entries
+        )
+        letter_ocr_reads = sum(
+            entry.get("letter_method") == "tesseract"
+            for entry in entries
+        )
+        topology_fallbacks = sum(
+            entry.get("score_method") == "topology"
             for entry in entries
         )
         print(
             f"Tile audit: {len(entries)} cards, "
-            f"{mismatches} detection/JSON mismatches"
+            f"{detection_mismatches} detection/JSON mismatches, "
+            f"{letter_reviews} letter/JSON reviews, "
+            f"{score_reviews} score/JSON reviews, "
+            f"{letter_ocr_reads} letter OCR readings, "
+            f"{score_ocr_reads} score OCR readings, "
+            f"{topology_fallbacks} topology fallbacks"
         )
         print(f"Saved: {args.tile_audit}")
 

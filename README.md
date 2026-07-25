@@ -8,7 +8,7 @@ A Claude AI [skill](core/SKILL.md) for solving [NYT Crossplay](https://www.nytim
 Given a screenshot of a Crossplay board and your current tile rack, this skill:
 
 1. Detects tile positions on the board using HSV color filtering and dual-anchor grid calibration
-2. Audits every source score corner in responsive, filterable verification cards
+2. Audits source tile letters and score corners with optional Tesseract OCR, a conservative score-shape fallback, and responsive verification cards
 3. Builds a tournament-grade dictionary from the **NWL23** word list (~145K words)
 4. Finds all legal moves and scores them correctly (letter/word multipliers, cross-words, 40-pt bingo bonus)
 5. Outputs standalone HTML move boards with strategic notes and per-move
@@ -20,7 +20,7 @@ Given a screenshot of a Crossplay board and your current tile rack, this skill:
 |--------|---------|
 | [`fetch_core.py`](src/scripts/fetch_core.py) | Creates a fresh sparse checkout for the auto-updating bootstrap skill |
 | [`setup_dict.py`](core/scripts/setup_dict.py) | Fetches a pinned NWL23 source revision and builds `dict.txt` |
-| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid and a metadata-backed tile audit with enlarged score corners |
+| [`grid_overlay.py`](core/scripts/grid_overlay.py) | Draws a numbered grid and a metadata-backed tile audit for source letters and score corners |
 | [`solver.py`](core/scripts/solver.py) | Core solver engine — finds and scores all legal moves |
 | [`moves_template.py`](core/scripts/moves_template.py) | Generates HTML board confirmations and move visualizations with clipboard-ready boards |
 | [`nwl23_ref.py`](core/scripts/nwl23_ref.py) | NWL23 reference data: 2-letter words, bingo stems, high-value short words |
@@ -52,8 +52,8 @@ This skill is designed to be invoked through a Claude conversation. Drop a Cross
 Claude in the background will:
 
 1. Run `grid_overlay.py` on your screenshot to number the cells
-2. Read tile positions manually, then audit each source score corner against
-   the JSON letter and blank status
+2. Read tile positions manually, then audit each source letter and score corner
+   against the JSON letter and blank status
 3. Verify the board by checking the last play's score when it is available
 4. Show one HTML board confirmation with the tile audit embedded before solving
 5. Run the solver and present the top moves visually
@@ -66,6 +66,14 @@ Claude in the background will:
 ```bash
 pip install opencv-python numpy
 ```
+
+Tesseract 5 with the `eng` language model is optional. When
+`tesseract --list-langs` includes `eng`, the audit checks score digits and uses
+two agreeing reads of each central tile letter as secondary mismatch evidence.
+It never rewrites `board.json`. Without usable score OCR, the audit
+automatically uses its bundled topology check; letters remain a visual review.
+The script invokes the native executable directly, so the `pytesseract`
+package is not required.
 
 Or, with [uv](https://docs.astral.sh/uv/):
 
@@ -82,7 +90,7 @@ python core/scripts/setup_dict.py --output dict.txt
 # 2. Generate a numbered overlay, then transcribe board.json.
 python core/scripts/grid_overlay.py screenshot.png --output overlay.png
 
-# 3. Audit every transcribed tile and score corner.
+# 3. Audit every transcribed source letter and score corner.
 python core/scripts/grid_overlay.py screenshot.png --output overlay.png --board-json board.json --tile-audit tile-audit.png
 
 # 4. Inspect the parsed board and explicit blank inventory.

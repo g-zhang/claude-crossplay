@@ -12,7 +12,8 @@ description: >-
   from GitHub before use.
 compatibility: >-
   Requires Python 3.8+, git, outbound HTTPS access to github.com, and a writable
-  temporary directory. The fetched core also requires opencv-python and numpy.
+  temporary directory. The fetched core also requires opencv-python and numpy;
+  Tesseract 5 with English data is optional for score and letter OCR review.
 ---
 
 # NYT Crossplay Solver Bootstrap
