@@ -89,6 +89,15 @@ or color treatment. The PNG carries the evidence and result in layout metadata
 that the board-confirmation renderer validates before building theme-aware
 cards which reflow across phone and desktop widths.
 
+Board pages are designed to survive embedded viewers. Scripted output links
+board cells and audit cards with buttons and `data-` targets instead of URL
+fragments, so a sandboxed viewer never treats a same-page jump as external
+navigation; `--no-script` output keeps plain `#` anchors and `:target`
+highlighting. Board rasterization prefers a `blob:` URL and falls back to a
+`data:` URL when a viewer's policy blocks blob images, and `Copy SVG` includes a
+PNG flavor because document editors ignore the SVG flavor and would otherwise
+paste raw markup.
+
 ## Troubleshooting
 
 - **Score mismatch:** Recheck column alignment, blank tiles, and the tile

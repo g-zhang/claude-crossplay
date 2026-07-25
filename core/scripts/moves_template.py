@@ -140,8 +140,9 @@ body{font-family:system-ui,-apple-system,sans-serif;padding:16px;background:var(
 .cell.blank .pts{font-size:9px;opacity:1;font-weight:800;color:#fff}
 .blank-mark{position:absolute;bottom:2px;left:2px;font-size:7px;line-height:1;font-weight:800;color:var(--blank-border)}
 .cell.audit-link{cursor:pointer;text-decoration:none}
+button.cell{appearance:none;-webkit-appearance:none;border:0;font-family:inherit;line-height:inherit;text-align:center}
 .cell.audit-link:hover,.cell.audit-link:focus-visible{z-index:1;outline:2px solid var(--divider);outline-offset:-2px}
-.cell.audit-link:target{z-index:2;outline:3px solid var(--audit-accent);outline-offset:-3px}
+.cell.audit-link:target,.cell.audit-link.is-active{z-index:2;outline:3px solid var(--audit-accent);outline-offset:-3px}
 .blank-audit{max-width:540px;margin:0 0 12px;padding:10px 12px;border:2px solid var(--blank-audit-border);border-radius:6px;background:var(--blank-audit-bg);font-size:13px;line-height:1.45}
 .blank-swatch{background:var(--tile-blank);box-shadow:inset 0 0 0 2px var(--blank-border);color:#fff;font-size:7px;font-weight:800;text-align:center;line-height:16px}
 .legend{display:flex;gap:16px;margin:12px 0 24px;font-size:12px;color:var(--text-sec);flex-wrap:wrap}
@@ -167,13 +168,13 @@ h1{font-size:20px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .audit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:10px;padding:10px;border:1px solid var(--surface-border);border-top:0;border-radius:0 0 12px 12px;background:var(--surface-subtle)}
 .audit-card{display:block;min-width:0;padding:9px;border:1px solid var(--surface-border);border-radius:10px;background:var(--surface);box-shadow:var(--surface-shadow);color:inherit;text-decoration:none;scroll-margin-top:16px}
 .audit-card[hidden]{display:none}
-.audit-card[href]{cursor:pointer}
+.audit-card[href],.audit-card[role="button"]{cursor:pointer}
 .audit-card.blank{border-color:var(--audit-blank)}
 .audit-card.mismatch{border-color:var(--audit-alert);box-shadow:inset 0 3px 0 var(--audit-alert)}
 .audit-card.score:not(.mismatch){border-color:var(--audit-blank)}
 .audit-card:hover{border-color:var(--audit-accent)}
 .audit-card:focus-visible{outline:2px solid var(--audit-accent);outline-offset:2px}
-.audit-card:target{outline:3px solid var(--divider);outline-offset:2px}
+.audit-card:target,.audit-card.is-active{outline:3px solid var(--divider);outline-offset:2px}
 .audit-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
 .audit-coordinate{color:var(--text);font-size:12px;font-weight:750}
 .audit-state{padding:4px 8px;border-radius:999px;background:var(--surface-subtle);color:var(--text-sec);font-size:13px;font-weight:750;line-height:1.2;white-space:nowrap}
@@ -374,18 +375,32 @@ function boardSvgMarkup(board) {
 
 async function copySvgBoard(board) {
   const svg = boardSvgMarkup(board);
+  const svgType = 'image/svg+xml';
   let clipboardError = null;
   if (navigator.clipboard && window.ClipboardItem) {
-    const svgType = 'image/svg+xml';
-    const supportsSvg = typeof ClipboardItem.supports !== 'function'
-      || ClipboardItem.supports(svgType);
-    if (supportsSvg) {
-      const item = new ClipboardItem({
-        [svgType]: new Blob([svg], {type: svgType}),
-        'text/plain': new Blob([svg], {type: 'text/plain'})
-      });
+    const supportsType = type => typeof ClipboardItem.supports !== 'function'
+      || ClipboardItem.supports(type);
+    const svgBlob = () => new Blob([svg], {type: svgType});
+    const textBlob = () => new Blob([svg], {type: 'text/plain'});
+    const attempts = [];
+    // Documents ignore the SVG flavor and would paste the raw markup, so
+    // offer a PNG in the same item; vector tools still read the SVG.
+    if (supportsType('image/png')) {
+      const withPng = {
+        'image/png': boardPngBlob(board),
+        'text/plain': textBlob()
+      };
+      if (supportsType(svgType)) {
+        withPng[svgType] = svgBlob();
+      }
+      attempts.push(withPng);
+    }
+    if (supportsType(svgType)) {
+      attempts.push({[svgType]: svgBlob(), 'text/plain': textBlob()});
+    }
+    for (const payload of attempts) {
       try {
-        await navigator.clipboard.write([item]);
+        await navigator.clipboard.write([new ClipboardItem(payload)]);
         return;
       } catch (error) {
         clipboardError = error;
@@ -406,16 +421,44 @@ async function copySvgBoard(board) {
   throw clipboardError || new Error('SVG clipboard copy is unavailable');
 }
 
+async function loadBoardSvgImage(svg) {
+  const sources = [];
+  try {
+    sources.push({
+      url: URL.createObjectURL(
+        new Blob([svg], {type: 'image/svg+xml;charset=utf-8'})
+      ),
+      revoke: true
+    });
+  } catch (error) {
+    // Object URLs are unavailable; the data URL below still works.
+  }
+  // Embedded viewers may block blob: images, so keep a data: URL fallback.
+  sources.push({
+    url: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+    revoke: false
+  });
+  let lastError = null;
+  for (const source of sources) {
+    try {
+      return {image: await loadImage(source.url), source};
+    } catch (error) {
+      lastError = error;
+      if (source.revoke) {
+        URL.revokeObjectURL(source.url);
+      }
+    }
+  }
+  throw lastError || new Error('Could not render board image');
+}
+
 async function boardPngBlob(board) {
   const rect = board.getBoundingClientRect();
   const width = Math.ceil(rect.width);
   const height = Math.ceil(rect.height);
   const svg = boardSvgMarkup(board);
-  const url = URL.createObjectURL(
-    new Blob([svg], {type: 'image/svg+xml;charset=utf-8'})
-  );
+  const {image, source} = await loadBoardSvgImage(svg);
   try {
-    const image = await loadImage(url);
     const scale = 2;
     const canvas = document.createElement('canvas');
     canvas.width = width * scale;
@@ -427,7 +470,9 @@ async function boardPngBlob(board) {
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     return await canvasPngBlob(canvas);
   } finally {
-    URL.revokeObjectURL(url);
+    if (source.revoke) {
+      URL.revokeObjectURL(source.url);
+    }
   }
 }
 
@@ -543,9 +588,20 @@ function handleAuditFilter(button) {
   }
 }
 
-function revealAuditTarget(link) {
-  const targetId = link.hash.slice(1);
-  const target = document.getElementById(targetId);
+function clearAuditHighlights() {
+  document.querySelectorAll('.is-active').forEach(node => {
+    node.classList.remove('is-active');
+  });
+}
+
+function scrollBehavior() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth';
+}
+
+function revealAuditTarget(control) {
+  const target = document.getElementById(control.dataset.auditTarget);
   if (!target) {
     return;
   }
@@ -556,20 +612,25 @@ function revealAuditTarget(link) {
   if (allButton) {
     handleAuditFilter(allButton);
   }
+  clearAuditHighlights();
+  target.classList.add('is-active');
+  target.focus({preventScroll: true});
+  const behavior = scrollBehavior();
+  requestAnimationFrame(() => {
+    target.scrollIntoView({behavior, block: 'center'});
+  });
 }
 
-function revealBoardTarget(link) {
-  const targetId = link.hash.slice(1);
-  const target = document.getElementById(targetId);
+function revealBoardTarget(control) {
+  const target = document.getElementById(control.dataset.boardTarget);
   const board = target && target.closest('.board');
   if (!target || !board) {
     return;
   }
-  window.location.hash = link.hash;
+  clearAuditHighlights();
+  target.classList.add('is-active');
   target.focus({preventScroll: true});
-  const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ? 'auto'
-    : 'smooth';
+  const behavior = scrollBehavior();
   requestAnimationFrame(() => {
     board.scrollIntoView({behavior, block: 'start'});
   });
@@ -584,18 +645,36 @@ document.addEventListener('click', event => {
     handleAuditFilter(filter);
     return;
   }
-  const auditLink = event.target.closest('.audit-link[href^="#audit-"]');
-  if (auditLink) {
-    revealAuditTarget(auditLink);
+  const auditControl = event.target.closest(
+    '.audit-link[data-audit-target]'
+  );
+  if (auditControl) {
+    revealAuditTarget(auditControl);
     return;
   }
-  const boardLink = event.target.closest(
-    '.audit-card[href^="#board-cell-"]'
+  const boardControl = event.target.closest(
+    '.audit-card[data-board-target]'
   );
-  if (boardLink) {
-    event.preventDefault();
-    revealBoardTarget(boardLink);
+  if (boardControl) {
+    revealBoardTarget(boardControl);
   }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+  const boardControl = event.target.closest(
+    '.audit-card[data-board-target]'
+  );
+  if (!boardControl) {
+    return;
+  }
+  event.preventDefault();
+  revealBoardTarget(boardControl);
 });
 </script>"""
 
@@ -614,7 +693,7 @@ def prem_cell_html(prem_type):
 
 def _tile_cell_html(
         r, c, raw, cell_class, link_to_audit=False,
-        show_blank_mark=True):
+        show_blank_mark=True, include_scripts=True):
     letter = raw.upper()
     is_blank = raw.islower()
     pts = 0 if is_blank else TILE_PTS.get(letter, 0)
@@ -626,14 +705,26 @@ def _tile_cell_html(
     tag = "div"
     attributes = f'class="{cell_class}"'
     if link_to_audit:
-        tag = "a"
         kind = "blank tile" if is_blank else "tile"
-        attributes = (
-            f'id="board-cell-{r}-{c}" class="{cell_class} audit-link" '
-            f'href="#audit-{r}-{c}" '
+        label = (
             f'aria-label="View source audit for {kind} '
             f'{escape(letter)} at row {r}, column {c}"'
         )
+        if include_scripts:
+            # A button keeps the jump in-document, so embedded viewers do not
+            # treat a fragment link as external navigation.
+            tag = "button"
+            attributes = (
+                f'type="button" id="board-cell-{r}-{c}" '
+                f'class="{cell_class} audit-link" '
+                f'data-audit-target="audit-{r}-{c}" {label}'
+            )
+        else:
+            tag = "a"
+            attributes = (
+                f'id="board-cell-{r}-{c}" class="{cell_class} audit-link" '
+                f'href="#audit-{r}-{c}" {label}'
+            )
     return (
         f"<{tag} {attributes}>{blank_mark}{escape(letter)}"
         f'<span class="pts">{pts}</span></{tag}>'
@@ -642,7 +733,7 @@ def _tile_cell_html(
 
 def cell_html(
         r, c, board, new_tiles, premium, audit_targets=None,
-        show_blank_mark=True):
+        show_blank_mark=True, include_scripts=True):
     key = f"{r},{c}"
     if key in new_tiles:
         raw = new_tiles[key]
@@ -668,6 +759,7 @@ def cell_html(
                 audit_targets is not None and (r, c) in audit_targets
             ),
             show_blank_mark=show_blank_mark,
+            include_scripts=include_scripts,
         )
     else:
         prem = premium.get((r, c))
@@ -1107,7 +1199,9 @@ def _legacy_audit_manifest(board, width, height):
     }
 
 
-def _audit_card_html(entry, index, layout, detection_known, scale):
+def _audit_card_html(
+        entry, index, layout, detection_known, scale,
+        include_scripts=True):
     row = entry["row"]
     col = entry["col"]
     letter = entry["letter"]
@@ -1201,12 +1295,25 @@ def _audit_card_html(entry, index, layout, detection_known, scale):
     coordinate = f"Row {row}, column {col}"
     if entry["transcribed"]:
         kind = "blank tile" if entry["blank"] else "tile"
-        opening = (
-            f'<a id="audit-{row}-{col}" class="{" ".join(classes)}" '
-            f'href="#board-cell-{row}-{col}" aria-label="Return to {kind} '
-            f'{escape(letter)} at row {row}, column {col} on the board">'
+        label = (
+            f'aria-label="Return to {kind} '
+            f'{escape(letter)} at row {row}, column {col} on the board"'
         )
-        closing = "</a>"
+        if include_scripts:
+            # Scripted output avoids fragment links so embedded viewers never
+            # treat a same-page jump as external navigation.
+            opening = (
+                f'<div id="audit-{row}-{col}" class="{" ".join(classes)}" '
+                f'role="button" tabindex="0" '
+                f'data-board-target="board-cell-{row}-{col}" {label}>'
+            )
+            closing = "</div>"
+        else:
+            opening = (
+                f'<a id="audit-{row}-{col}" class="{" ".join(classes)}" '
+                f'href="#board-cell-{row}-{col}" {label}>'
+            )
+            closing = "</a>"
     else:
         opening = (
             f'<article id="audit-{row}-{col}" '
@@ -1281,6 +1388,7 @@ def _responsive_tile_audit_html(
             layout,
             detection_known,
             scale,
+            include_scripts=include_scripts,
         )
         for index, entry in enumerate(entries)
     )
@@ -1496,6 +1604,7 @@ def generate_board_confirm_html(
                     {},
                     premium,
                     audit_targets=audit_targets,
+                    include_scripts=include_scripts,
                 )
             )
     parts.append('</div></div>')

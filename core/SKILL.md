@@ -273,7 +273,9 @@ python "<SKILL_DIR>/scripts/moves_template.py" moves --board "<WORK_DIR>/board.j
 Present `moves-{N}.html` with a concise text summary of the best move and any
 important caveat. Board-confirmation and move pages have `Copy SVG` and
 `Copy PNG` controls for sharing each board; browser clipboard permission is
-required. Use `--no-script` only when the destination forbids JavaScript; it
+required. Both controls place a PNG on the clipboard, so documents paste an
+image, while `Copy SVG` also carries the vector markup for tools that read it.
+Use `--no-script` only when the destination forbids JavaScript; it
 also omits the copy controls.
 
 ## Report a problem
