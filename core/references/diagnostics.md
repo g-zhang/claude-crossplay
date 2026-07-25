@@ -57,7 +57,9 @@ must return the same single uppercase letter. Agreement with JSON is `clear`;
 disagreement is a required `review`; empty, multi-character, or disagreeing
 output is `unavailable` and leaves the full source tile for visual review.
 Confidence is not used because correct readings can have low reported
-confidence on these small stylized glyphs. OCR evidence never changes JSON.
+confidence on these small stylized glyphs. A stable reading is the preferred
+correction for a conflicting transcription, but the audit only reports it and
+never edits `board.json` itself.
 
 Tesseract remains optional. If the executable is absent or returns no usable
 digit, the audit counts enclosed loops in the score glyph at four thresholds
@@ -93,8 +95,8 @@ cards which reflow across phone and desktop widths.
   values in `game-rules.md`. When the reconstruction is too high, inspect the
   affected word's score corners for a displayed 0 that should be lowercase in
   JSON.
-- **Letter mismatch:** Compare the full source crop with JSON. Treat OCR as a
-  prompt to review, not as an automatic correction. Check the score corner
+- **Letter mismatch:** Prefer the OCR letter and correct `board.json` unless
+  the full source crop clearly disproves it. Check the score corner
   separately because the main letter cannot distinguish a blank.
 - **No moves:** Recheck board reconstruction and confirm existing words are
   present in `dict.txt`.

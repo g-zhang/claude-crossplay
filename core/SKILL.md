@@ -154,14 +154,17 @@ The audit checks for optional Tesseract OCR first. When `tesseract` is on
 `PATH` and its `eng` language data is available, a usable score digit is
 compared directly with the JSON claim. Two nearby thresholds must also produce
 the same single `A-Z` reading before the central source letter is compared with
-JSON. Letter OCR is secondary evidence only: never use it to rewrite
-`board.json`, and visually resolve each red `LETTER!` review.
+JSON. Treat a Tesseract reading as the default correct value: when one conflicts
+with `board.json`, correct the transcription to match OCR, then confirm that
+correction against the source crop. Keep the transcription only when the tile
+visibly disproves the reading, and say so when you do.
 
 If score OCR is unavailable or returns no usable digit, the audit falls back to
-its bundled multi-threshold score-shape check. A red `SCORE!` card is a required
-blank-casing review; `BOTH!` means both letter and score conflict. A neutral
-ambiguity note means the fallback topology cannot distinguish 0 from 4, 6, or
-10; inspect those corners visually instead of guessing. Blank status always
+its bundled multi-threshold score-shape check. That fallback is a flag, not an
+authority; resolve its results by looking at the corner. A red `SCORE!` card is a
+required blank-casing review; `BOTH!` means both letter and score conflict. A
+neutral ambiguity note means the fallback topology cannot distinguish 0 from 4,
+6, or 10; inspect those corners visually instead of guessing. Blank status always
 comes from the score corner because a blank and normal tile display the same
 main letter.
 
@@ -171,8 +174,8 @@ Audit every card in both directions:
   `board.json`.
 - Every lowercase tile in `board.json` must display `0` in the source score
   corner.
-- Every transcribed letter must match the source tile; resolve a `LETTER!`
-  review visually instead of accepting OCR automatically.
+- Apply the OCR letter by default when a `LETTER!` card conflicts with the
+  transcription, then confirm the corrected tile against the source crop.
 - Resolve every detector/JSON, letter/JSON, or score/JSON review, then
   regenerate the audit.
 
@@ -202,12 +205,14 @@ Render a confirmation page through the bundled CLI:
 python "<SKILL_DIR>/scripts/moves_template.py" board --board "<WORK_DIR>/board.json" --tile-audit "<OUTPUT_DIR>/tile-audit-{N}.png" --output "<OUTPUT_DIR>/board-{N}.html" --title "Board confirmation" --subtitle "Round {N}"
 ```
 
-Present `board-{N}.html`, which turns `tile-audit-{N}.png` into responsive,
-theme-aware verification cards beneath the board. The cards reflow for phone
+Present `board-{N}.html` only. It already embeds `tile-audit-{N}.png` as
+responsive, theme-aware verification cards beneath the board, so never attach or
+display the audit PNG separately at this step. The cards reflow for phone
 and desktop widths while preserving the full-tile and enlarged-score evidence.
 Each occupied board cell links to its audit card, and each card returns to and
 highlights that board cell. The summary controls filter the cards to all tiles,
-blanks, detector/transcription mismatches, or unresolved score checks.
+blanks, detector/transcription mismatches, letter reviews, or unresolved score
+checks.
 State the blank coordinates you marked, including when the list is empty, and
 ask the user to confirm both the letters and all score-0 blank tiles. Wait for
 explicit confirmation or corrections. This checkpoint is intentionally before

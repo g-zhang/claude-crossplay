@@ -354,7 +354,8 @@ def analyze_tile_letter(letter, ocr_letter=None):
         "letter_ocr": ocr_letter,
         "letter_reason": (
             f"Tesseract read {ocr_letter} rather than JSON's "
-            f"{claimed_letter}; verify the source tile."
+            f"{claimed_letter}; prefer {ocr_letter} unless the source tile "
+            "disproves it."
         ),
     }
 
@@ -458,7 +459,8 @@ def analyze_score_corner(score_image, letter, is_blank, ocr_digit=None):
                 "score_ocr_digit": ocr_digit,
                 "score_reason": (
                     f"Tesseract read {ocr_digit} rather than JSON's "
-                    f"{claimed_points}; verify blank casing."
+                    f"{claimed_points}; prefer the OCR score and fix "
+                    "blank casing."
                 ),
             }
         return {
@@ -468,7 +470,8 @@ def analyze_score_corner(score_image, letter, is_blank, ocr_digit=None):
             "score_ocr_digit": ocr_digit,
             "score_reason": (
                 f"Tesseract read {ocr_digit}, which does not match JSON's "
-                f"{claimed_points}; verify the score and blank casing."
+                f"{claimed_points}; prefer the OCR score unless the corner "
+                "disproves it."
             ),
         }
 

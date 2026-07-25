@@ -1366,10 +1366,10 @@ def _responsive_tile_audit_html(
         '<h2 id="source-tile-audit">Tile and score audit</h2>'
         '<p class="audit-intro">Compare each source tile with its enlarged '
         'score corner and JSON claim. Every displayed 0 must be a lowercase '
-        'blank in JSON, and every lowercase blank must display 0. Optional '
-        'OCR and built-in shape checks flag supported conflicts '
-        'without changing JSON. Visually verify every warning and unavailable '
-        'reading.</p></div>'
+        'blank in JSON, and every lowercase blank must display 0. A Tesseract '
+        'reading is the preferred correction when it conflicts with JSON; the '
+        'built-in shape check only flags. Visually verify every ambiguous or '
+        'unavailable reading.</p></div>'
         '<div class="audit-summary">'
         f"{tile_chip}{blank_chip}"
         f"{detection_chip}{letter_chip}{score_chip}</div></div>"

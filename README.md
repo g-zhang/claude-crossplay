@@ -68,12 +68,13 @@ pip install opencv-python numpy
 ```
 
 Tesseract 5 with the `eng` language model is optional. When
-`tesseract --list-langs` includes `eng`, the audit checks score digits and uses
-two agreeing reads of each central tile letter as secondary mismatch evidence.
-It never rewrites `board.json`. Without usable score OCR, the audit
-automatically uses its bundled topology check; letters remain a visual review.
-The script invokes the native executable directly, so the `pytesseract`
-package is not required.
+`tesseract --list-langs` includes `eng`, the audit reads score digits and
+requires two agreeing reads of each central tile letter. Those readings are the
+preferred correction when they conflict with the transcription, and the audit
+reports each conflict rather than editing `board.json` itself. Without usable
+score OCR, the audit automatically uses its bundled topology check; letters
+remain a visual review. The script invokes the native executable directly, so
+the `pytesseract` package is not required.
 
 Or, with [uv](https://docs.astral.sh/uv/):
 
