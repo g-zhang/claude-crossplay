@@ -283,9 +283,11 @@ COPY_CSS = """<style>
 </style>"""
 
 MOVES_RESULT_CSS = """<style>
-.cell.tile.blank,.cell.new.blank{background:var(--tile-blank);box-shadow:none}
-.cell.blank .pts,.blank-swatch{font-weight:400}
-.blank-swatch{box-shadow:none}
+.cell.tile.blank{background:var(--tile-blank);box-shadow:none}
+.cell.new.blank{background:var(--new-tile-blank);box-shadow:none}
+.cell.blank .pts,.blank-swatch,.new-blank-swatch{font-weight:400}
+.blank-swatch,.new-blank-swatch{box-shadow:none}
+.new-blank-swatch{background:var(--new-tile-blank)}
 .move-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .move-title{min-width:0}
 .move-section .cell.tile,.move-section .cell.new{cursor:default}
@@ -1990,10 +1992,15 @@ def generate_moves_html(
             'box-shadow:inset 0 0 0 2px var(--new-border)"></span> '
             'Play here</div>'
         )
-    if _has_blank(board, *move_tiles):
+    if _has_blank(board):
         legend_entries.append(
             '<div class="leg"><span class="leg-box blank-swatch">B0</span> '
-            'Blank (0 points)</div>'
+            'Existing blank (0 points)</div>'
+        )
+    if _has_blank(*move_tiles):
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box new-blank-swatch">B0</span> '
+            'Blank to place (0 points)</div>'
         )
     # A premium stays in the legend while any rendered move board still shows it.
     visible_premiums = set()
