@@ -287,7 +287,9 @@ MOVES_RESULT_CSS = """<style>
 .cell.new.blank{background:var(--new-tile-blank);box-shadow:none}
 .cell.blank .pts,.blank-swatch,.new-blank-swatch{font-weight:400}
 .blank-swatch,.new-blank-swatch{box-shadow:none}
-.new-blank-swatch{background:var(--new-tile-blank)}
+/* Match the text treatment .blank-swatch gets in the shared stylesheet so the
+   score reads the same in both blank swatches. */
+.new-blank-swatch{background:var(--new-tile-blank);color:#fff;font-size:7px;text-align:center;line-height:16px}
 .move-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .move-title{min-width:0}
 .move-section .cell.tile,.move-section .cell.new{cursor:default}
@@ -1992,14 +1994,16 @@ def generate_moves_html(
             'box-shadow:inset 0 0 0 2px var(--new-border)"></span> '
             'Play here</div>'
         )
+    # Move boards render blanks without the corner "B" mark, so the swatches
+    # show only the score the tile actually carries.
     if _has_blank(board):
         legend_entries.append(
-            '<div class="leg"><span class="leg-box blank-swatch">B0</span> '
+            '<div class="leg"><span class="leg-box blank-swatch">0</span> '
             'Existing blank (0 points)</div>'
         )
     if _has_blank(*move_tiles):
         legend_entries.append(
-            '<div class="leg"><span class="leg-box new-blank-swatch">B0</span> '
+            '<div class="leg"><span class="leg-box new-blank-swatch">0</span> '
             'Blank to place (0 points)</div>'
         )
     # A premium stays in the legend while any rendered move board still shows it.
