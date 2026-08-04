@@ -1982,10 +1982,19 @@ def generate_moves_html(
         )
     move_tiles = [move["tiles"] for move in moves]
     legend_entries = []
+    # Keep each swatch beside its blank counterpart so the legend reads as
+    # "already on the board" then "what this move adds".
+    # Move boards render blanks without the corner "B" mark, so the blank
+    # swatches show only the score the tile actually carries.
     if board:
         legend_entries.append(
             '<div class="leg"><span class="leg-box" '
             'style="background:var(--tile)"></span> Existing</div>'
+        )
+    if _has_blank(board):
+        legend_entries.append(
+            '<div class="leg"><span class="leg-box blank-swatch">0</span> '
+            'Existing blank (0 points)</div>'
         )
     if any(move_tiles):
         legend_entries.append(
@@ -1993,13 +2002,6 @@ def generate_moves_html(
             'style="background:var(--new-tile);'
             'box-shadow:inset 0 0 0 2px var(--new-border)"></span> '
             'Play here</div>'
-        )
-    # Move boards render blanks without the corner "B" mark, so the swatches
-    # show only the score the tile actually carries.
-    if _has_blank(board):
-        legend_entries.append(
-            '<div class="leg"><span class="leg-box blank-swatch">0</span> '
-            'Existing blank (0 points)</div>'
         )
     if _has_blank(*move_tiles):
         legend_entries.append(
