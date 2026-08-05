@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="claude-crossplay" src=".github/assets/logo.svg" width="432">
+</p>
+
 # claude-crossplay
 A Claude AI [skill](core/SKILL.md) for solving [NYT Crossplay](https://www.nytimes.com/games/crossplay) board positions — finds the highest-scoring legal moves given a board screenshot and rack of tiles.
 
