@@ -1,6 +1,6 @@
 [project]
 name = "claude-crossplay"
-version = "0.4.0"
+version = "0.5.0"
 description = "Claude AI skill for solving NYT Crossplay board positions."
 readme = "README.md"
 requires-python = ">=3.8"
