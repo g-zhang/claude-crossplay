@@ -296,19 +296,27 @@ MOVES_RESULT_CSS = """<style>
 .move-section .cell.tile:hover,.move-section .cell.new:hover{z-index:1;outline:2px solid var(--cell-hover);outline-offset:-2px}
 </style>"""
 
+# Hues sampled from the NYT Crossplay board -- 3W lavender, 2W periwinkle,
+# 3L sage, 2L cream -- carrying about three quarters of the saturation the
+# earlier palette used. Text lightness is solved per square for ~5.7:1
+# against its own background rather than copied from a fixed value: HSL
+# lightness is not perceptual luminance, so a sage green and a violet at the
+# same lightness read very differently against these pastels.
 PREM_COLORS_LIGHT = {
-    "3W": ("#FAECE7", "#993C1D"),
-    "2W": ("#FBEAF0", "#993556"),
-    "3L": ("#E6F1FB", "#185FA5"),
-    "2L": ("#EAF3DE", "#3B6D11"),
+    "3W": ("#E7D4F0", "#7C2F8B"),
+    "2W": ("#D7DFF0", "#344F9B"),
+    "3L": ("#E2EDCD", "#4E6021"),
+    "2L": ("#EEEAD1", "#725426"),
 }
 
-# Dark mode premium colors: darker bg, lighter text
+# Dark mode premium colors: deep background, light text. 2W and 3L keep the
+# blue and green this palette used before, which stay legible on dark far
+# better than dimmed versions of their light-mode hues.
 PREM_COLORS_DARK = {
-    "3W": ("#4A1B0C", "#F5C4B3"),
-    "2W": ("#4B1528", "#F4C0D1"),
-    "3L": ("#042C53", "#85B7EB"),
-    "2L": ("#173404", "#C0DD97"),
+    "3W": ("#2C1431", "#D99FE4"),
+    "2W": ("#042C53", "#85B7EB"),
+    "3L": ("#173404", "#C0DD97"),
+    "2L": ("#332512", "#E5B97F"),
 }
 
 THEME_SCRIPT = r"""<script>
